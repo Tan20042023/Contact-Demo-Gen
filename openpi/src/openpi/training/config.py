@@ -31,6 +31,7 @@ import openpi.transforms as _transforms
 
 from openpi.policies import single_arm_policy, dual_arm_policy
 from .dexjoco_configs import get_dexjoco_configs
+from .task13_tpu_configs import get_task13_tpu_configs
 
 ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
@@ -696,11 +697,11 @@ class TrainConfig:
         return (pathlib.Path(self.assets_base_dir) / self.name).resolve()
 
     @property
-    def checkpoint_dir(self) -> pathlib.Path:
+    def checkpoint_dir(self) -> epath.Path:
         """Get the checkpoint directory for this config."""
         if not self.exp_name:
             raise ValueError("--exp_name must be set")
-        return (pathlib.Path(self.checkpoint_base_dir) / self.name / self.exp_name).resolve()
+        return (epath.Path(self.checkpoint_base_dir) / self.name / self.exp_name).resolve()
 
     @property
     def trainable_filter(self) -> nnx.filterlib.Filter:
@@ -1125,7 +1126,9 @@ _CONFIGS = [
     *roboarena_config.get_roboarena_configs(),
     *polaris_config.get_polaris_configs(),
     # DexJoCo configs.
-    *get_dexjoco_configs()
+    *get_dexjoco_configs(),
+    # Isolated Task 13 TPU feasibility configs. They have no GPU-mainline output paths.
+    *get_task13_tpu_configs(),
 ]
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
