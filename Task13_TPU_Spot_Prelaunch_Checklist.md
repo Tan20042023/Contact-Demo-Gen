@@ -13,7 +13,7 @@ Status: active preparation only. This checklist does not authorize a TPU VM, dep
 
 - GitHub repository: https://github.com/Tan20042023/Contact-Demo-Gen.git
 - TPU branch: task13-tpu-feasibility-prep
-- Current TPU commit: 62dca44 Add-Task13-TPU-feasibility-configs
+- Current TPU preparation commits: 62dca44 and 4533dd8
 - The branch is based on DexJoCo HEAD 8d23b0fab23b17a58c4b55f3942e17013aaf8267, not on the dirty 5090 worktree.
 - The branch contains only:
   - isolated Task 13 TPU configs;
@@ -49,6 +49,24 @@ gs://euw4/user/tanjunhao/task13_tpu_feasibility/v1/runs/
 ~~~
 
 Never write checkpoint, training state, logs, or temporary test objects under input_assets.
+
+## GCP access readiness
+
+- Verified on 2026-08-26: project `whyu01` has Cloud TPU API enabled; the active human account is `tjh20042024@gmail.com`.
+- The dedicated runtime identity is `tpu-bucket-writer@whyu01.iam.gserviceaccount.com`.
+- Its bucket permissions are deliberately scoped: `input_assets/` is read-only and `runs/` is read/write. It has no unrestricted bucket-admin grant.
+- Required before requesting the TPU: a project Owner or Service Account Admin must grant the human requester the Service Account User role on this single runtime identity, so it can be attached to the TPU VM:
+
+  ~~~bash
+  gcloud iam service-accounts add-iam-policy-binding \
+    tpu-bucket-writer@whyu01.iam.gserviceaccount.com \
+    --project=whyu01 \
+    --member=user:tjh20042024@gmail.com \
+    --role=roles/iam.serviceAccountUser
+  ~~~
+
+- Keep the gcloud project explicit in all TPU commands (`--project=whyu01`); the current 5090 gcloud configuration has no default project set.
+- The intentionally prefix-scoped bucket policies do not grant bucket-wide object listing. The TPU preflight must validate the exact data/bootstrap access path and GCS checkpoint behavior before any formal run. Do not widen bucket read access merely to make recursive listings convenient without a separate review.
 
 ## Spot checkpoint policy
 
