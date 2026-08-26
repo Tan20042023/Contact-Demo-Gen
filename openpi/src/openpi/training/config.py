@@ -701,7 +701,9 @@ class TrainConfig:
         """Get the checkpoint directory for this config."""
         if not self.exp_name:
             raise ValueError("--exp_name must be set")
-        return (epath.Path(self.checkpoint_base_dir) / self.name / self.exp_name).resolve()
+        # Do not call resolve(): epath correctly retains gs:// URIs until then,
+        # while resolving converts them into a TPU-local path such as gs:/...
+        return epath.Path(self.checkpoint_base_dir) / self.name / self.exp_name
 
     @property
     def trainable_filter(self) -> nnx.filterlib.Filter:
