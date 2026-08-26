@@ -53,20 +53,12 @@ Never write checkpoint, training state, logs, or temporary test objects under in
 ## GCP access readiness
 
 - Verified on 2026-08-26: project `whyu01` has Cloud TPU API enabled; the active human account is `tjh20042024@gmail.com`.
-- The dedicated runtime identity is `tpu-bucket-writer@whyu01.iam.gserviceaccount.com`.
-- Its bucket permissions are deliberately scoped: `input_assets/` is read-only and `runs/` is read/write. It has no unrestricted bucket-admin grant.
-- Required before requesting the TPU: a project Owner or Service Account Admin must grant the human requester the Service Account User role on this single runtime identity, so it can be attached to the TPU VM:
-
-  ~~~bash
-  gcloud iam service-accounts add-iam-policy-binding \
-    tpu-bucket-writer@whyu01.iam.gserviceaccount.com \
-    --project=whyu01 \
-    --member=user:tjh20042024@gmail.com \
-    --role=roles/iam.serviceAccountUser
-  ~~~
+- The TPU request must omit `--service-account`, so the VM uses the existing Compute Engine default service account `184047521632-compute@developer.gserviceaccount.com`.
+- That default identity is already a project Editor and can access the existing `euw4` bucket through the project's current bucket policy. This is the tutorial-compatible path and does not require any new IAM grant by the requester.
+- `tpu-bucket-writer@whyu01.iam.gserviceaccount.com` and its prefix-scoped bindings are unused by this plan. Leave them unchanged unless the project owner later chooses a separately reviewed least-privilege migration.
 
 - Keep the gcloud project explicit in all TPU commands (`--project=whyu01`); the current 5090 gcloud configuration has no default project set.
-- The intentionally prefix-scoped bucket policies do not grant bucket-wide object listing. The TPU preflight must validate the exact data/bootstrap access path and GCS checkpoint behavior before any formal run. Do not widen bucket read access merely to make recursive listings convenient without a separate review.
+- The future TPU preflight must validate the default runtime identity's GCS read/list/write access and checkpoint behavior before any formal run.
 
 ## Spot checkpoint policy
 
