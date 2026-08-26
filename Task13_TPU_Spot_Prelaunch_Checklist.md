@@ -13,7 +13,7 @@ Status: active preparation only. This checklist does not authorize a TPU VM, dep
 
 - GitHub repository: https://github.com/Tan20042023/Contact-Demo-Gen.git
 - TPU branch: task13-tpu-feasibility-prep
-- Current TPU preparation commits: 62dca44 and 4533dd8
+- Current TPU preparation commit: 5d879a4 Prepare-default-TPU-runtime-preflight
 - The branch is based on DexJoCo HEAD 8d23b0fab23b17a58c4b55f3942e17013aaf8267, not on the dirty 5090 worktree.
 - The branch contains only:
   - isolated Task 13 TPU configs;
@@ -71,6 +71,8 @@ Never write checkpoint, training state, logs, or temporary test objects under in
 ## Target TPU request
 
 Preferred request: spot TPU v6e-4 in europe-west4-a. It is a single-VM four-chip configuration, compatible with global batch 32 and the pre-registered FSDP 2/4 tests.
+
+Read-only verification on 2026-08-26 confirmed that both `europe-west4-a` and `us-east1-d` currently advertise `v6e-4` as an accelerator type in project `whyu01`. This confirms the shape is supported, not that spot capacity is currently available.
 
 Fallback order:
 
