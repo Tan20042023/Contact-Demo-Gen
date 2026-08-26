@@ -84,7 +84,7 @@ PASS requires exactly one host, process_count=1, a device count in {1,2,4,8,16,3
 
 After G1, create an environment such as openpi-task13-tpu on the TPU VM only. Preserve the requested baseline versions JAX 0.5.3, Flax 0.10.2, Orbax 0.11.13 and record exact Python, NumPy, Torch, LeRobot, PyAV, JAX, jaxlib/libtpu, Flax, and Orbax versions and installation source in the TPU output root. Replace only the accelerator backend; do not edit openpi/pyproject.toml or the GPU lockfile.
 
-Validate jax.devices, host-to-device transfer, an all-device collective, a disposable Orbax save/restore, and Torch/LeRobot import without CUDA initialization. If the allocated TPU cannot run JAX 0.5.3 without an unadjudicated core-stack upgrade, stop with a compatibility report.
+Validate jax.devices, host-to-device transfer, an all-device collective, a disposable **local** Orbax save/restore followed by GCS upload/download restore, and Torch/LeRobot import without CUDA initialization. If the allocated TPU cannot run JAX 0.5.3 without an unadjudicated core-stack upgrade, stop with a compatibility report.
 
 ## Phase 2: derived input gate
 
@@ -112,7 +112,11 @@ Only after Hammer 100-step PASS, run bimanual_assembly / nominal_src / seed42 us
 
 For any separately approved TPU technical run longer than the 100-step smoke, use a TPU-only save_interval of 5000. This does not alter the frozen GPU/A100 recipe or authorize formal TPU training. It creates six recovery points across a 30,000-step run and bounds a single spot-preemption loss to fewer than 5,000 steps.
 
-During the 100-step smoke, measure steady-state step time and checkpoint save time. Before any longer TPU run, stop for plan-author review if 5,000 steps would exceed approximately 30 minutes of wall time, checkpoint writing materially stalls training, or the existing retention policy would discard a usable recovery point. Checkpoints, state, and logs must use a distinct GCS runs prefix, never the immutable input_assets prefix.
+During the 100-step smoke, measure steady-state step time and checkpoint save time. Before any longer TPU run, stop for plan-author review if 5,000 steps would exceed approximately 30 minutes of wall time, checkpoint writing materially stalls training, or the existing retention policy would discard a usable recovery point.
+
+Orbax 0.11.13 cannot initialize its empty temporary checkpoint prefix directly on GCS: GCS object prefixes are not real directories, so Orbax fails before writing state. Therefore the approved TPU-only implementation writes each checkpoint locally, where Orbax atomically publishes the numbered step directory, then a sidecar copies that completed directory to the distinct GCS runs prefix. It compares total file bytes and writes `UPLOAD_COMPLETE` only after a successful copy. Recovery must use only a GCS step containing that marker. Never write under immutable `input_assets`; do not upgrade the core stack merely to alter this behavior.
+
+This path was preflighted on 2026-08-26 with a synthetic two-integer Orbax checkpoint: local save, GCS upload, fresh download, and restore all passed (1,411 checkpoint bytes). The production 100-step and GPU restore gates remain unrun and require separate approval.
 
 ## Phase 4: TPU to GPU checkpoint round trip
 

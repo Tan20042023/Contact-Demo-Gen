@@ -58,7 +58,7 @@ Never write checkpoint, training state, logs, or temporary test objects under in
 - `tpu-bucket-writer@whyu01.iam.gserviceaccount.com` and its prefix-scoped bindings are unused by this plan. Leave them unchanged unless the project owner later chooses a separately reviewed least-privilege migration.
 
 - Keep the gcloud project explicit in all TPU commands (`--project=whyu01`); the current 5090 gcloud configuration has no default project set.
-- The future TPU preflight must validate the default runtime identity's GCS read/list/write access and checkpoint behavior before any formal run.
+- The future TPU preflight must validate the default runtime identity's GCS read/list/write access and the local-checkpoint-to-GCS sync behavior before any formal run.
 
 ## Spot checkpoint policy
 
@@ -66,7 +66,7 @@ Never write checkpoint, training state, logs, or temporary test objects under in
 - Keep period remains 30000 unless a separate review changes it.
 - The 100-step smoke still saves the terminal step-99 checkpoint.
 - After the smoke, calculate 5000 times steady-state step time. If it exceeds about 30 minutes, checkpoint save time materially stalls training, or retention cannot keep a usable recovery checkpoint, stop for review before a longer run.
-- Checkpoint state must write to the GCS runs prefix so a preempted spot VM can be recreated without losing the latest completed save.
+- Checkpoint state writes locally first. A TPU-only sidecar syncs each atomically completed numeric step to the GCS runs prefix, verifies byte totals, then writes its `UPLOAD_COMPLETE` marker. Resume only from marked steps so a preempted spot VM never uses a partial upload.
 
 ## Target TPU request
 
@@ -100,7 +100,7 @@ Do not request or run a complete 64-chip or 320-chip slice with the current load
 - [ ] Create an isolated TPU environment. Never alter the GPU openpi environment or its CUDA JAX installation.
 - [ ] Verify JAX 0.5.3, Flax 0.10.2, Orbax 0.11.13, libtpu, Torch, LeRobot, and PyAV compatibility. Stop if a core stack upgrade is required.
 - [ ] Verify GCS read/write from both gcloud and Python application credentials.
-- [ ] Verify JAX devices, a small collective, host-to-device transfer, and disposable Orbax GCS save/restore.
+- [ ] Verify JAX devices, a small collective, host-to-device transfer, and disposable local Orbax save → GCS upload → fresh download/restore.
 - [ ] Download inputs locally, compare every path/size/SHA-256 to the 5090 inventory, then mark the local copy read-only.
 
 ## Smoke and portability gates
