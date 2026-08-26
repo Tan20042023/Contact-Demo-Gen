@@ -1,7 +1,8 @@
 """Isolated TPU feasibility configurations for sealed Task 13 inputs.
 
-Input assets are copied locally from GCS by the spot-VM bootstrap. Checkpoints
-write directly to a distinct GCS runs prefix through etils.epath and Orbax.
+Input assets and checkpoints stay on the TPU VM's local disk while training.
+Completed, atomically committed checkpoint steps are copied to a distinct GCS
+runs prefix by the accompanying sync sidecar.
 """
 
 from __future__ import annotations
@@ -15,9 +16,8 @@ import openpi.training.weight_loaders as weight_loaders
 
 
 INPUT_ROOT = Path(os.environ.get("TASK13_TPU_INPUT_ROOT", "/mnt/task13/input_assets"))
-RUNS_ROOT = os.environ.get(
-    "TASK13_TPU_RUNS_ROOT",
-    "gs://euw4/user/tanjunhao/task13_tpu_feasibility/v1/runs",
+LOCAL_RUNS_ROOT = Path(
+    os.environ.get("TASK13_TPU_LOCAL_RUNS_ROOT", "/home/tanjunhao/task13_local_runs")
 )
 FSDP_DEVICES = int(os.environ.get("TASK13_TPU_FSDP_DEVICES", "4"))
 CONDS = ("nominal_src", "repeat", "visual", "contact", "combined")
@@ -70,7 +70,10 @@ def _make_config(task: str, condition: str, *, smoke: bool):
         freeze_filter=model.get_freeze_filter(),
         ema_decay=None,
         assets_base_dir=str(assets_root),
-        checkpoint_base_dir=f"{RUNS_ROOT}/checkpoints_{phase}",
+        # Orbax 0.11.13 cannot initialize a checkpoint directory directly on
+        # GCS because empty object-store prefixes are not real directories.
+        # The TPU launcher syncs each locally atomically committed step to GCS.
+        checkpoint_base_dir=str(LOCAL_RUNS_ROOT / f"checkpoints_{phase}"),
         seed=42,
         batch_size=32,
         num_workers=4,
