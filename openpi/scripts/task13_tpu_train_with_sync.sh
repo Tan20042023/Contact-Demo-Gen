@@ -33,7 +33,6 @@ print(str(local), f"{gcs_root}/{gcs[0]}/{gcs[1]}/{gcs[2]}")
 PY
 )
 
-mkdir -p "${local_checkpoint_dir}"
 export TASK13_TPU_LOCAL_CHECKPOINT_DIR="${local_checkpoint_dir}"
 export TASK13_TPU_GCS_CHECKPOINT_DIR="${gcs_checkpoint_dir}"
 log_dir="${TASK13_TPU_LOCAL_RUNS_ROOT}/sync_logs"
