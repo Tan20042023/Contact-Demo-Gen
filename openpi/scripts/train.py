@@ -232,20 +232,23 @@ def main(config: _config.TrainConfig):
     batch = next(data_iter)
     logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(batch)}")
 
-    # Log images from first batch to sanity check.
-    # get the whole batch of images on CPU to avoid deadlocks
-    cpu_images_dict = {
-        view_name: jax.device_get(img_array)
-        for view_name, img_array in batch[0].images.items()
-    }
+    # Log images from the first batch to sanity check. A multi-host batch spans
+    # non-addressable devices, so materializing it on one host is invalid. The
+    # TPU input preflight already validates the staged camera data; keep this
+    # optional visual logging on the single-host path only.
+    if os.environ.get("TASK13_TPU_MULTIHOST") != "1":
+        cpu_images_dict = {
+            view_name: jax.device_get(img_array)
+            for view_name, img_array in batch[0].images.items()
+        }
 
-    num_images_to_log = min(5, len(next(iter(cpu_images_dict.values()))))
+        num_images_to_log = min(5, len(next(iter(cpu_images_dict.values()))))
 
-    images_to_log = [
-        wandb.Image(np.concatenate([cpu_img[i] for cpu_img in cpu_images_dict.values()], axis=1))
-        for i in range(num_images_to_log)
-    ]
-    wandb.log({"camera_views": images_to_log}, step=0)
+        images_to_log = [
+            wandb.Image(np.concatenate([cpu_img[i] for cpu_img in cpu_images_dict.values()], axis=1))
+            for i in range(num_images_to_log)
+        ]
+        wandb.log({"camera_views": images_to_log}, step=0)
 
     train_state, train_state_sharding = init_train_state(config, init_rng, mesh, resume=resuming)
     jax.block_until_ready(train_state)
