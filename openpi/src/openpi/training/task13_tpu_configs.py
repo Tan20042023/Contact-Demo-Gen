@@ -36,8 +36,11 @@ def _make_config(task: str, condition: str, *, smoke: bool):
 
     dual_arm = task == "bimanual_assembly"
     model = _model(44 if dual_arm else None)
-    data_root = INPUT_ROOT / "lerobot" / task / condition
-    assets_root = INPUT_ROOT / "assets_full" / task / condition
+    # The sealed GCS input bundle preserves the Task13 source layout.  Keep
+    # these paths explicit so LeRobot opens the local v3 metadata instead of
+    # falling back to the Hub for the placeholder repo ID (``local_repo``).
+    data_root = INPUT_ROOT / "datasets" / "task13" / "v1" / "lerobot" / task / condition
+    assets_root = INPUT_ROOT / "outputs" / "task13_policy_matrix" / "v1" / "assets_full" / task / condition
     base_name = "pi05_base_action_dim_44" if dual_arm else "pi05_base"
     base = INPUT_ROOT / "checkpoints" / base_name / "params"
     phase = "smoke" if smoke else "technical"
