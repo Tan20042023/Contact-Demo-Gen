@@ -323,7 +323,20 @@ def create_torch_data_loader(
         else:
             local_batch_size = batch_size
     else:
-        local_batch_size = batch_size // jax.process_count()
+        process_count = jax.process_count()
+        local_batch_size = batch_size // process_count
+        if process_count > 1:
+            # A TPU slice runs one JAX process per host. Give each host a
+            # deterministic, non-overlapping dataset partition rather than
+            # repeating the same local batches on every host.
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                dataset,
+                num_replicas=process_count,
+                rank=jax.process_index(),
+                shuffle=shuffle,
+                seed=seed,
+                drop_last=True,
+            )
 
     logging.info(f"local_batch_size: {local_batch_size}")
     data_loader = TorchDataLoader(
@@ -413,9 +426,6 @@ class TorchDataLoader:
                 execute in the main process.
             seed: The seed to use for shuffling the data.
         """
-        if jax.process_count() > 1:
-            raise NotImplementedError("Data loading with multiple processes is not supported.")
-
         if len(dataset) < local_batch_size:
             raise ValueError(f"Local batch size ({local_batch_size}) is larger than the dataset size ({len(dataset)}).")
 
@@ -428,6 +438,7 @@ class TorchDataLoader:
                 jax.sharding.PartitionSpec("B"),
             )
         self._num_batches = num_batches
+        self._sampler = sampler
 
         mp_context = None
         if num_workers > 0:
@@ -455,7 +466,11 @@ class TorchDataLoader:
 
     def __iter__(self):
         num_items = 0
+        epoch = 0
         while True:
+            if isinstance(self._sampler, torch.utils.data.distributed.DistributedSampler):
+                self._sampler.set_epoch(epoch)
+                epoch += 1
             data_iter = iter(self._data_loader)
             while True:
                 if self._num_batches is not None and num_items >= self._num_batches:
