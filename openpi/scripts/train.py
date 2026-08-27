@@ -1,6 +1,7 @@
 import dataclasses
 import functools
 import logging
+import os
 import platform
 from typing import Any
 
@@ -192,6 +193,11 @@ def train_step(
 
 
 def main(config: _config.TrainConfig):
+    # TPU slices need every host to join one JAX distributed runtime before
+    # device discovery or mesh creation. The opt-in guard keeps all existing
+    # single-host GPU/TPU launch paths unchanged.
+    if os.environ.get("TASK13_TPU_MULTIHOST") == "1":
+        jax.distributed.initialize()
     init_logging()
     logging.info(f"Running on: {platform.node()}")
 
