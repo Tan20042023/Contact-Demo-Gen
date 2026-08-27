@@ -22,15 +22,19 @@ the Spot-VM recovery tutorial and the validated Task13 TPU run on 2026-08-26.
 | --- | --- |
 | GCP project | `whyu01` |
 | TPU SSH user | `tanjunhao` |
-| Current successful slice | Spot `v6e-4`, `us-east1-d`, one host, topology `2x2`, four JAX devices |
+| Last qualified slice | Spot `v6e-4`, `us-east1-d`, one host, topology `2x2`, four JAX devices |
+| Active allocation | Spot `v6e-16`, `us-east1-d`, topology `4x4`, four TPU VM workers; preflight pending |
 | Input bucket prefix | `gs://use1/user/tanjunhao/task13_tpu_feasibility/v1/input_assets/` |
 | Output bucket prefix | `gs://use1/user/tanjunhao/task13_tpu_feasibility/v1/runs/` — use a new per-run child |
 | TPU branch | `task13-tpu-feasibility-prep` in `Tan20042023/Contact-Demo-Gen` |
 
 Do not assume a future Spot allocation has the same IP, zone, topology, device
-count, service account, or capacity. The current `v6e-4` passed the one-host
-global-batch-32 gate; do not silently use a multi-host or 64/320-chip slice for
-this codebase, because its loader has not been qualified for that topology.
+count, service account, or capacity. `v6e-4` is the last *qualified* profile.
+The active `v6e-16` is a four-worker side-track profile: do not reuse its
+single-host launcher or checkpoint daemon unchanged. It needs a fresh
+multi-process startup test and a real all-worker checkpoint-to-GCS-and-restore
+test before any long run. Keep global batch 32 unless a new, explicitly approved
+experiment protocol says otherwise.
 
 ## Spot TPU lifecycle
 
@@ -153,4 +157,3 @@ specifies the retention decision. When cleanup is approved, inventory exact loca
 and GCS output prefixes first, delete only those paths, verify they are absent,
 and preserve input assets, environment/bootstrap scripts, source branch, and this
 guide for the next TPU allocation.
-
