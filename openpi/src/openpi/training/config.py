@@ -697,13 +697,11 @@ class TrainConfig:
         return (pathlib.Path(self.assets_base_dir) / self.name).resolve()
 
     @property
-    def checkpoint_dir(self) -> epath.Path:
+    def checkpoint_dir(self) -> pathlib.Path:
         """Get the checkpoint directory for this config."""
         if not self.exp_name:
             raise ValueError("--exp_name must be set")
-        # Do not call resolve(): epath correctly retains gs:// URIs until then,
-        # while resolving converts them into a TPU-local path such as gs:/...
-        return epath.Path(self.checkpoint_base_dir) / self.name / self.exp_name
+        return (pathlib.Path(self.checkpoint_base_dir) / self.name / self.exp_name).resolve()
 
     @property
     def trainable_filter(self) -> nnx.filterlib.Filter:
@@ -1129,7 +1127,7 @@ _CONFIGS = [
     *polaris_config.get_polaris_configs(),
     # DexJoCo configs.
     *get_dexjoco_configs(),
-    # Isolated Task 13 TPU feasibility configs. They have no GPU-mainline output paths.
+    # Isolated Task13 TPU side-branch configs. They never share GPU output paths.
     *get_task13_tpu_configs(),
 ]
 

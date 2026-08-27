@@ -1,9 +1,4 @@
-"""Isolated TPU feasibility configurations for sealed Task 13 inputs.
-
-Input assets and checkpoints stay on the TPU VM's local disk while training.
-Completed, atomically committed checkpoint steps are copied to a distinct GCS
-runs prefix by the accompanying sync sidecar.
-"""
+"""Isolated TPU feasibility configurations for sealed Task 13 inputs."""
 
 from __future__ import annotations
 
@@ -16,12 +11,8 @@ import openpi.training.weight_loaders as weight_loaders
 
 
 INPUT_ROOT = Path(os.environ.get("TASK13_TPU_INPUT_ROOT", "/mnt/task13/input_assets"))
-LOCAL_RUNS_ROOT = Path(
-    os.environ.get("TASK13_TPU_LOCAL_RUNS_ROOT", "/home/tanjunhao/task13_local_runs")
-)
+LOCAL_RUNS_ROOT = Path(os.environ.get("TASK13_TPU_LOCAL_RUNS_ROOT", "/home/tanjunhao/task13_local_runs"))
 FSDP_DEVICES = int(os.environ.get("TASK13_TPU_FSDP_DEVICES", "4"))
-# The TorchDataLoader used by this TPU path rejects process workers. Keep the
-# GPU mainline unchanged while making the TPU-specific setting explicit.
 NUM_WORKERS = int(os.environ.get("TASK13_TPU_NUM_WORKERS", "0"))
 CONDS = ("nominal_src", "repeat", "visual", "contact", "combined")
 
@@ -47,7 +38,8 @@ def _make_config(task: str, condition: str, *, smoke: bool):
     model = _model(44 if dual_arm else None)
     data_root = INPUT_ROOT / "lerobot" / task / condition
     assets_root = INPUT_ROOT / "assets_full" / task / condition
-    base = INPUT_ROOT / "checkpoints" / ("pi05_base_action_dim_44" if dual_arm else "pi05_base") / "params"
+    base_name = "pi05_base_action_dim_44" if dual_arm else "pi05_base"
+    base = INPUT_ROOT / "checkpoints" / base_name / "params"
     phase = "smoke" if smoke else "technical"
     name = f"task13_tpu_{phase}_{task}_{condition}"
     data_common = {
@@ -73,16 +65,15 @@ def _make_config(task: str, condition: str, *, smoke: bool):
         freeze_filter=model.get_freeze_filter(),
         ema_decay=None,
         assets_base_dir=str(assets_root),
-        # Orbax 0.11.13 cannot initialize a checkpoint directory directly on
-        # GCS because empty object-store prefixes are not real directories.
-        # The TPU launcher syncs each locally atomically committed step to GCS.
         checkpoint_base_dir=str(LOCAL_RUNS_ROOT / f"checkpoints_{phase}"),
         seed=42,
         batch_size=32,
         num_workers=NUM_WORKERS,
         num_train_steps=100 if smoke else 30_000,
         log_interval=1 if smoke else 100,
-        save_interval=100 if smoke else 5_000,
+        # Start with a denser Spot-recovery interval; P2 may change this only
+        # after P1 measures the all-worker save and upload cost.
+        save_interval=100 if smoke else 2_500,
         keep_period=30_000,
         wandb_enabled=False,
         fsdp_devices=FSDP_DEVICES,

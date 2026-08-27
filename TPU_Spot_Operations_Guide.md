@@ -23,46 +23,60 @@ the Spot-VM recovery tutorial and the validated Task13 TPU run on 2026-08-26.
 | GCP project | `whyu01` |
 | TPU SSH user | `tanjunhao` |
 | Last qualified slice | Spot `v6e-4`, `us-east1-d`, one host, topology `2x2`, four JAX devices |
-| Active allocation | Spot `v6e-16`, `us-east1-d`, topology `4x4`, four TPU VM workers; preflight pending |
+| Latest allocation | Spot `v6e-16`, `us-east1-d`, topology `4x4`, four TPU VM workers; preempted during checkpoint validation on 2026-08-27 |
 | Current Task13 side-branch inputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/input_assets/` |
 | Current Task13 side-branch outputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/runs/` — use a new per-run child |
 | TPU branch | `task13-tpu-feasibility-prep` in `Tan20042023/Contact-Demo-Gen` |
 
 Do not assume a future Spot allocation has the same IP, zone, topology, device
-count, service account, or capacity. `v6e-4` is the last *qualified* profile.
-The active `v6e-16` is a four-worker side-track profile: do not reuse its
-single-host launcher or checkpoint daemon unchanged. It needs a fresh
-multi-process startup test and a real all-worker checkpoint-to-GCS-and-restore
-test before any long run. The TPU-native campaign, staging, and recovery
-contract live in `Task13_TPU_Native_Experiment_Plan.md`.
+count, service account, or capacity. `v6e-4` is the last *qualified* recovery
+profile. The most recent `v6e-16` run proved four-process JAX initialization,
+sharded LeRobot input, and a real 100-step Hammer forward/backward/update loop
+(all four workers completed, about 1.3 steps/s after compilation). It did **not**
+qualify checkpointing: the slice was preempted during the isolated one-step
+local save, before any state was made durable. Do not reuse its single-host
+launcher or checkpoint daemon unchanged. A real all-worker checkpoint-to-GCS-
+and-restore test remains mandatory before any long run. The TPU-native campaign,
+staging, and recovery contract live in `Task13_TPU_Native_Experiment_Plan.md`.
 
 ## Spot TPU lifecycle
 
-1. Create the requested Spot TPU VM with an explicit project and zone.
-2. **First connect with gcloud**, not bare SSH:
+1. Use any authenticated **control host** (operator laptop or Cloud Shell is
+   preferred). It needs `gcloud` access to `whyu01`; it is not part of the
+   TPU runtime data or training path. `lab-server-5090` is only a legacy
+   fallback because it happened to hold an authenticated gcloud session during
+   initial setup.
+2. Create the requested Spot TPU VM with an explicit project and zone.
+3. Require both `state=READY` **and** `health=HEALTHY`. `READY` with
+   `UNHEALTHY_MAINTENANCE` is not usable; do not bootstrap or train in that
+   state.
+4. **First connect with gcloud**, not bare SSH:
 
    ```bash
    gcloud compute tpus tpu-vm ssh TPU_NAME --project=whyu01 --zone=ZONE
    ```
 
    This uploads/generates the Compute Engine SSH key and establishes host keys.
-3. Read the new external IP and update the `tanjunhao-tpu` SSH alias. A Spot
-   recreation normally has a different IP.
+5. Read the new external IP and update the `tanjunhao-tpu` SSH alias only when
+   direct interactive SSH is wanted. A controller can use `gcloud compute tpus
+   tpu-vm ssh/scp` without this alias. A Spot recreation normally has a
+   different IP.
 
    ```bash
    gcloud compute tpus tpu-vm describe TPU_NAME --project=whyu01 --zone=ZONE \
      --format='value(networkEndpoints[0].accessConfig.externalIp)'
    ```
 
-4. Record state, health, accelerator type, topology, host count, JAX
+6. Record state, health, accelerator type, topology, host count, JAX
    `process_count`, device count, disk, RAM, runtime version, and attached
    service account. Require a healthy single-host VM and a device count dividing
    the configured global batch.
-5. A preempted Spot TPU cannot be restarted. Recreate it and repeat this section.
+7. A preempted Spot TPU cannot be restarted. Recreate it and repeat this section.
 
-When operating through `lab-server-5090`, use its configured `proxy_on` function
-before `gcloud` commands if network access fails. Its gcloud session should use
-an explicit `--project=whyu01`.
+All runtime inputs, weights, bootstrap archives, logs, and committed checkpoints
+belong in GCS. The TPU must bootstrap directly from GCS using its attached
+service account; it must never need a 5090-local path, environment, dataset, or
+Git credential to train.
 
 ## Authentication and Git
 
@@ -78,9 +92,9 @@ activate the service account for `gcloud`, set `GOOGLE_APPLICATION_CREDENTIALS`
 for Python clients, and keep both files out of Git, logs, documents, and chat.
 Prefer least-privilege bucket access and rotate any exposed key.
 
-For GitHub, use the TPU-specific repository/branch. The 5090 has GitHub SSH
-access; a fresh TPU VM may not. It is safe to transfer a prepared clone or bundle
-from the 5090, or configure a short-lived authorized GitHub method. Never embed a
+For GitHub, build an immutable source archive from the TPU-specific branch and
+put it in GCS before requesting a Spot slice. A fresh TPU VM downloads that
+archive directly from GCS; it never needs GitHub authentication. Never embed a
 PAT in a repository URL or script.
 
 ## Build the TPU environment
@@ -109,46 +123,77 @@ LeRobot stack requires NumPy 2.x. Do not downgrade the TPU core numerical stack
 just to make this optional client metadata pass `pip check`; instead document the
 exception and validate the imports actually used by the TPU training path.
 
+## v6e-16 code-audit gates
+
+Before requesting the next slice, publish a new immutable source release that
+contains all three TPU changes together: `train.py` multi-host initialization
+and TPU checkpoint-step labeling; `data_loader.py` deterministic
+`DistributedSampler` sharding; and the registered in-package Task13 TPU config.
+Do not depend on a manually copied config file or a 5090-local checkout.
+
+The Task13 launcher must `cd "${WORKDIR}/openpi"` before importing
+`openpi.training.config`: the inherited DexJoCo config currently resolves
+`config.yaml` from the process working directory. Treat an incorrect working
+directory as a preflight failure, not a reason to edit GPU configuration.
+
+The following repository-root scripts are historical single-host artifacts and
+must not be used for v6e-16: `task13_tpu_phase1_bootstrap.sh`,
+`task13_tpu_phase2_project_deps.sh`, `task13_tpu_vm_preflight.sh`,
+`task13_tpu_checkpoint_sync_daemon.sh`, and `task13_tpu_train_with_sync.sh`.
+They either assert `process_count == 1`, refer to old paths/regions, or implement
+the invalid single-host checkpoint protocol. Keep them only as audit history
+until an explicit cleanup decision.
+
+`task13_tpu_v6e16_bootstrap_all.sh` is the intended controller shape. Its
+worker stages the immutable input URI to a read-only local cache and verifies
+the release byte count before emitting readiness data; its first real
+all-worker `READY.json` test is still a required gate. A controller must reject
+`READY` plus `UNHEALTHY_MAINTENANCE` before copying or launching anything.
+
 ## Inputs, outputs, and checkpointing
 
-- Copy only required inputs from GCS to local disk before launching a Spot run;
-  verify manifests, make the input copy read-only, and keep it separate from
-  outputs. For Task13, the cached input root is
+- The bootstrap release must copy required inputs from GCS to local disk before
+  declaring `READY.json`; verify manifests, make the input copy read-only, and
+  keep it separate from outputs. For Task13, the cached input root is
   `/home/tanjunhao/task13_input_assets`.
 - Never write into `input_assets`.
 - Do **not** write Orbax 0.11.13 checkpoints directly to `gs://`. GCS object
   prefixes are not true empty directories; Orbax fails while initializing its
   temporary prefix before state is written.
-- Write checkpoints locally. Local POSIX Orbax commits each numbered step by
-  atomic directory rename. A visible numeric step directory is therefore the
-  completed checkpoint signal.
-- Run `openpi/scripts/task13_tpu_checkpoint_sync_daemon.sh` alongside training.
-  It copies a completed numeric step to GCS, compares total bytes, then creates
-  `UPLOAD_COMPLETE`. Resume only from a remote step that has this marker.
-- The launcher `openpi/scripts/task13_tpu_train_with_sync.sh CONFIG_NAME` derives
-  the local and GCS paths, starts the sidecar, and runs a registered config. Do
-  not pre-create the checkpoint directory: `CheckpointManager` deliberately
-  rejects an existing directory unless a real resume/overwrite policy is set.
+- A single-host local Orbax directory/`UPLOAD_COMPLETE` sidecar is valid only
+  for single-host slices. It is **not valid for v6e-16**: each TPU VM has a
+  separate local filesystem and Orbax writes process-specific state.
+- For v6e-16, each process must upload its completed local contribution under
+  `checkpoints/<step>/worker-<index>/`, with a byte count and SHA manifest.
+  Worker 0 writes `COMMITTED.json` only after all four manifests have been
+  verified. Restore only a step with that commit record, materialize the needed
+  union on every worker, then run an actual restore plus one training step.
+- Until that exact all-worker save/upload/restore test passes, **no 1k or 30k
+  Task13 run may start**. Do not pre-create a checkpoint directory unless a
+  real `resume=True` policy is selected.
 
-For long approved technical runs, the TPU-specific save interval is 5,000 steps.
-For a 100-step smoke, save the terminal step. Measure actual checkpoint duration
-and review the interval if 5,000 steps would risk too much Spot-preemption loss.
+Use 2,500 steps for the first P1 checkpoint interval; measure save plus upload
+time, then freeze either 2,500 or 5,000 for P2 before it starts. For a 100-step
+smoke, save the terminal state. The saved directory must be labeled by the
+post-update training step (100, not loop index 99).
 
 ## Monitoring and recovery
 
 Run training under `nohup` or `tmux`, log into the local output root, and monitor
-both training and sync logs. Record compilation time separately from steady-state
-step time. The validated Task13 smoke took about two minutes for first compile,
-then about 1.8 steps/s on `v6e-4`; its terminal checkpoint was about 9.56 GB.
+training and all-worker commit logs. Record compilation time separately from
+steady-state step time. The validated `v6e-4` smoke took about two minutes for
+first compile, then about 1.8 steps/s; the `v6e-16` Hammer P0 achieved about
+1.3 steps/s after compilation. Its checkpoint size and duration are unmeasured.
 
 On preemption:
 
 1. Recreate the VM and perform the gcloud first-connect/IP update.
-2. Recreate the isolated environment and system dependencies.
-3. Clone/transfer the pinned branch, restore only needed inputs from GCS, and
-   verify the attached identity's GCS access.
-4. Download the newest remote step containing `UPLOAD_COMPLETE`, validate it,
-   and use an explicitly approved resume configuration.
+2. Run the immutable GCS bootstrap release on every worker; it recreates the
+   isolated environment, source, and read-only inputs without 5090.
+3. Verify the attached identity's GCS access and all four `READY.json` records.
+4. Download only the newest step containing `COMMITTED.json`, validate every
+   worker manifest, materialize it on all workers, and use an explicitly
+   approved `resume=True` configuration.
 
 ## Closeout
 

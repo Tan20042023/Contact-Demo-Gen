@@ -1,6 +1,6 @@
 # Task13 TPU 原生实验方案
 
-**版本**：v1.0（2026-08-27）  
+**版本**：v1.1（2026-08-27）  
 **定位**：Spot TPU 支线；与 A100/GPU 正式主线隔离，不替代其结论。  
 **目标**：在不改动 canonical 输入、base、相机 schema 与 GPU 输出的前提下，
 让 Spot `v6e-16` 从拿到资源到可恢复训练的时间尽可能短。
@@ -54,10 +54,11 @@ gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/
 3. 并行下载/校验输入 cache，挂载为只读。
 4. 写出每个 worker 的 `READY.json`（runtime、release SHA、磁盘、GCS identity）。
 
-**启动脚本绝不启动训练。** 5090 只在四份 `READY.json`、GCS probe 与
-multi-host collective 都 PASS 后，才接受明确的发射命令。
+**启动脚本绝不启动训练。** 任意已认证的控制端（本机或 Cloud Shell 优先）
+只在四份 `READY.json`、GCS probe 与 multi-host collective 都 PASS 后，才
+接受明确的发射命令。5090 不属于运行时依赖，也不保存训练必需资产。
 
-一次性建设后，常规重建路径应是“创建 TPU → startup script 四机并行就绪 →
+一次性建设后，常规重建路径应是“创建 TPU → GCS bootstrap 四机并行就绪 →
 preflight → launch”，而不再临时安装、临时 clone、临时找输入。启动时长以实际
 时间记录为准；本方案不承诺未经测量的分钟数。
 
@@ -81,6 +82,11 @@ preflight → launch”，而不再临时安装、临时 clone、临时找输入
    process count、release/config/base/data SHA、每个 worker 的字节数与 SHA。
 5. 恢复时只认可含 `COMMITTED.json` 的最大 step；四个 worker 分别下载自己的
    shard，屏障同步后实际 restore，继续至少一个训练 step。
+
+2026-08-27 的 v6e-16 结果：四机 collective、分片 data loader 与 Hammer
+`nominal_src` 的 100-step 真训练通过（稳态约 1.3 step/s）；在隔离的 1-step
+checkpoint 保存期间 Spot 被抢占，未产生 `COMMITTED.json`。因此 checkpoint
+契约仍是 P0 的阻塞门，不能以“训练已跑通”替代。
 
 checkpoint interval 先设为 **2,500 steps**，并在 P1 记录 save+upload 时间。
 理由是 Spot 下平均最多损失约 1,250 steps，较原 5,000 更适合初期不稳定的
@@ -110,7 +116,7 @@ checkpoint interval 先设为 **2,500 steps**，并在 P1 记录 save+upload 时
 ## 7. 近期执行顺序
 
 1. 完成并封存 GCS `input_assets` 上传与 checksum 验证。
-2. 在 5090 构建并发布一个 bootstrap release（script、source archive、wheelhouse、manifest）。
+2. 在任意已认证控制端构建并发布一个 GCS bootstrap release（script、source archive、wheelhouse、input manifest）。
 3. 创建下一块 v6e-16 时传入 startup script；等待四机 READY。
 4. 实现/验证多主机 checkpoint contract，运行 P0/P1。
 5. 向用户报告实测启动、compile、吞吐、save/upload/restore 时间，再请求 P2 发射确认。

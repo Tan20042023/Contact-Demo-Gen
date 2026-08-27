@@ -196,7 +196,8 @@ def main(config: _config.TrainConfig):
     # TPU slices need every host to join one JAX distributed runtime before
     # device discovery or mesh creation. The opt-in guard keeps all existing
     # single-host GPU/TPU launch paths unchanged.
-    if os.environ.get("TASK13_TPU_MULTIHOST") == "1":
+    tpu_multihost = os.environ.get("TASK13_TPU_MULTIHOST") == "1"
+    if tpu_multihost:
         jax.distributed.initialize()
     init_logging()
     logging.info(f"Running on: {platform.node()}")
@@ -204,6 +205,11 @@ def main(config: _config.TrainConfig):
     if config.batch_size % jax.device_count() != 0:
         raise ValueError(
             f"Batch size {config.batch_size} must be divisible by the number of devices {jax.device_count()}."
+        )
+    if tpu_multihost and config.batch_size % jax.process_count() != 0:
+        raise ValueError(
+            f"TPU global batch {config.batch_size} must be divisible by the number of hosts "
+            f"{jax.process_count()}."
         )
 
     jax.config.update("jax_compilation_cache_dir", str(epath.Path("~/.cache/jax").expanduser()))
@@ -286,8 +292,14 @@ def main(config: _config.TrainConfig):
             infos = []
         batch = next(data_iter)
 
-        if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1:
-            _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step)
+        # TPU checkpoint names use the completed optimizer-step count. The
+        # historical single-host path uses the loop index, so leave it intact
+        # for GPU compatibility while removing the TPU off-by-one ambiguity.
+        checkpoint_step = int(train_state.step) if tpu_multihost else step
+        is_terminal_step = step == config.num_train_steps - 1
+        should_save = (checkpoint_step % config.save_interval == 0 and checkpoint_step > start_step) or is_terminal_step
+        if should_save:
+            _checkpoints.save_state(checkpoint_manager, train_state, data_loader, checkpoint_step)
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()
