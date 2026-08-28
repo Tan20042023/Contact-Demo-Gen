@@ -15,6 +15,7 @@ VENV="${ROOT}/venv"
 INPUT="${TASK13_TPU_INPUT_ROOT:-${ROOT}/input_assets}"
 STATE="${ROOT}/bootstrap/${TASK13_TPU_RUN_ID}"
 READY="${STATE}/READY.json"
+ORBAX_VERSION="0.11.24"
 mkdir -p "$STATE"
 
 if ! command -v python3.11 >/dev/null || ! command -v ffmpeg >/dev/null; then
@@ -45,8 +46,14 @@ if [[ ! -x "${VENV}/bin/python" ]]; then
   "$VENV/bin/python" -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.7.1+cpu' 'torchvision==0.22.1+cpu'
   sed -n '/^dependencies = \[/,/^\]/p' "${REPO}/openpi/pyproject.toml" | sed -n 's/^[[:space:]]*"\(.*\)",$/\1/p' | grep -Ev '^(jax\[cuda12\]|torch([<=>!~]|$)|torchvision([<=>!~]|$))' > "${STATE}/openpi-tpu-deps.txt"
   "$VENV/bin/python" -m pip install -r "${STATE}/openpi-tpu-deps.txt" torchcodec==0.5.* lerobot==0.4.4
+  "$VENV/bin/python" -m pip install "orbax-checkpoint==${ORBAX_VERSION}"
   "$VENV/bin/python" -m pip install -e "${REPO}/openpi" --no-deps
   "$VENV/bin/python" -m pip install -e "${REPO}/openpi/packages/openpi-client" --no-deps
+fi
+
+current_orbax="$("$VENV/bin/python" -c 'import orbax.checkpoint as ocp; print(ocp.__version__)')"
+if [[ "$current_orbax" != "$ORBAX_VERSION" ]]; then
+  "$VENV/bin/python" -m pip install --upgrade "orbax-checkpoint==${ORBAX_VERSION}"
 fi
 
 if [[ ! -e "$INPUT" ]]; then
@@ -62,13 +69,14 @@ fi
 "$VENV/bin/python" - <<PY > "$READY"
 import json, socket
 from pathlib import Path
-import jax, lerobot, torchcodec
+import jax, lerobot, torchcodec, orbax.checkpoint as ocp
 root = Path("$INPUT")
 print(json.dumps({
   "schema": "task13-v6e16-ready-v2", "host": socket.gethostname(),
   "source_uri": "$TASK13_TPU_CODE_URI", "source_sha256": "$TASK13_TPU_CODE_SHA256",
   "input_uri": "$TASK13_TPU_INPUT_URI", "input_bytes": sum(p.stat().st_size for p in root.rglob('*') if p.is_file()),
   "jax": jax.__version__, "local_device_count": jax.local_device_count(),
+  "orbax": ocp.__version__,
 }, sort_keys=True))
 PY
 echo "BOOTSTRAP_PASS host=$(hostname) ready=$READY"

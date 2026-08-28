@@ -55,7 +55,6 @@ def initialize_checkpoint_dir(
         max_to_keep=1,
         keep_period=keep_period,
         create=False,
-        enable_async_checkpointing=not tpu_multihost,
         async_options=ocp.AsyncOptions(timeout_secs=7200),
     )
     # TPU v6e workers have independent local disks.  An Orbax manager must
@@ -66,14 +65,17 @@ def initialize_checkpoint_dir(
     # four independently completed contributions to GCS and commits them with
     # the explicit Task13 manifest protocol.
     if tpu_multihost:
-        process_index = jax.process_index()
         options = dataclasses.replace(
             options,
             multiprocessing_options=ocp_options.MultiprocessingOptions(
-                primary_host=process_index,
-                active_processes={process_index},
-                barrier_sync_key_prefix=f"task13-local-orbax-{process_index}-",
+                primary_host=None,
+                barrier_sync_key_prefix="task13-local-orbax-",
             ),
+            # Orbax >=0.11.24 scopes its asynchronous directory and signal
+            # setup to the local process in this mode.  This is required when
+            # every v6e worker writes the same logical step to a different
+            # local filesystem before the explicit GCS shard transport.
+            enable_per_process_directory_creation=True,
         )
 
     pytree_kwargs = {"array_metadata_validator": _LocalProcessArrayMetadataValidator()} if tpu_multihost else {}
