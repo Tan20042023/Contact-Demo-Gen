@@ -27,7 +27,7 @@ the Spot-VM recovery tutorial and the validated Task13 TPU run on 2026-08-26.
 | Current Task13 side-branch inputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/input_assets/` |
 | Current Task13 side-branch outputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/runs/` — use a new per-run child |
 | TPU branch | `task13-tpu-feasibility-prep` in `Tan20042023/Contact-Demo-Gen` |
-| Last archived source candidate | **Not qualified:** Git `6b56f17a1920516c3430b58d265b728621cbfe23`; GCS `bootstrap/6b56f17a1920516c3430b58d265b728621cbfe23/source-layout-v2.tar.gz`; SHA-256 `5134d2c3f525e09b2beab27e3db2b5adb972be8c4664e57cd97e8fbe631cc2fd`. The pipeline repair is local and must be reviewed, committed and archived as a new release before any next launch. |
+| Current checkpoint-contract release | Git `25a474d`; GCS `bootstrap/25a474d/source-layout-v2.tar.gz`; SHA-256 `a6564298f07d74dbe3e3604c23aae1e1beb02897ee45cd46c83b42b3c9178261`. **It permits only the checkpoint-contract smoke and clean-resume validation; it is not yet a qualified formal-training release.** |
 
 Do not assume a future Spot allocation has the same IP, zone, topology, device
 count, service account, or capacity. `v6e-4` is the last *qualified* recovery
