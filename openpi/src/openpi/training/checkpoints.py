@@ -137,7 +137,13 @@ class CallbackHandler(ocp.AsyncCheckpointHandler):
     """A CheckpointHandler for calling an arbitrary function asynchronously. Only for saving, not for restoring."""
 
     def save(self, directory: epath.Path, args: CallbackSave):
-        if jax.process_index() == 0:
+        # The Task13 v6e-16 path uses a separate local checkpoint root on
+        # every TPU VM.  Each local Orbax manager is therefore a primary for
+        # its own contribution; restricting this callback to global process 0
+        # leaves the remaining managers waiting for an absent asset commit.
+        if os.environ.get("TASK13_TPU_MULTIHOST") == "1":
+            args.callback(directory)
+        elif jax.process_index() == 0:
             args.callback(directory)
 
     async def async_save(self, directory: epath.Path, args: CallbackSave) -> list[futures.Future]:
