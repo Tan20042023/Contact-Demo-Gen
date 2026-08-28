@@ -266,6 +266,12 @@ def main(config: _config.TrainConfig):
     if resuming:
         train_state = _checkpoints.restore_state(checkpoint_manager, train_state, data_loader)
 
+    # This is intentionally a log-only, all-worker recovery witness.  The
+    # external TPU controller verifies it on every worker before declaring a
+    # checkpoint contract qualified; it is not a substitute for Orbax/GCS
+    # manifest validation.
+    post_restore_update_pending = tpu_multihost and resuming
+
     ptrain_step = jax.jit(
         functools.partial(train_step, config),
         in_shardings=(replicated_sharding, train_state_sharding, data_sharding),
@@ -285,6 +291,14 @@ def main(config: _config.TrainConfig):
     for step in pbar:
         with sharding.set_mesh(mesh):
             train_state, info = ptrain_step(train_rng, train_state, batch)
+        if post_restore_update_pending:
+            jax.block_until_ready(train_state)
+            logging.info(
+                "TASK13_POST_RESTORE_UPDATE_PASS process=%s step=%s",
+                jax.process_index(),
+                int(train_state.step),
+            )
+            post_restore_update_pending = False
         infos.append(info)
         if step % config.log_interval == 0:
             stacked_infos = common_utils.stack_forest(infos)

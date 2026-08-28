@@ -1,6 +1,6 @@
 # Task13 TPU 原生实验方案
 
-**版本**：v1.1（2026-08-27）  
+**版本**：v1.2（2026-08-28，pipeline repair）
 **定位**：Spot TPU 支线；与 A100/GPU 正式主线隔离，不替代其结论。  
 **目标**：在不改动 canonical 输入、base、相机 schema 与 GPU 输出的前提下，
 让 Spot `v6e-16` 从拿到资源到可恢复训练的时间尽可能短。
@@ -83,10 +83,12 @@ preflight → launch”，而不再临时安装、临时 clone、临时找输入
 5. 恢复时只认可含 `COMMITTED.json` 的最大 step；四个 worker 分别下载自己的
    shard，屏障同步后实际 restore，继续至少一个训练 step。
 
-2026-08-27 的 v6e-16 结果：四机 collective、分片 data loader 与 Hammer
-`nominal_src` 的 100-step 真训练通过（稳态约 1.3 step/s）；在隔离的 1-step
-checkpoint 保存期间 Spot 被抢占，未产生 `COMMITTED.json`。因此 checkpoint
-契约仍是 P0 的阻塞门，不能以“训练已跑通”替代。
+2026-08-28 的 v6e-16 结果：四机 collective、分片 data loader 与 Hammer
+`nominal_src` 的 100-step 真训练通过（稳态约 1.3 step/s）；但三种候选
+checkpoint 路径均未得到四机保存、GCS commit、干净 materialize、restore 后
+再更新的完整证据。失败记录和修复门禁见
+`Task13_TPU_Pipeline_Repair.md`。因此 checkpoint 契约仍是 P0 的唯一阻塞门，
+不能以“训练已跑通”替代。
 
 checkpoint interval 先设为 **2,500 steps**，并在 P1 记录 save+upload 时间。
 理由是 Spot 下平均最多损失约 1,250 steps，较原 5,000 更适合初期不稳定的
@@ -118,5 +120,8 @@ checkpoint interval 先设为 **2,500 steps**，并在 P1 记录 save+upload 时
 1. 完成并封存 GCS `input_assets` 上传与 checksum 验证。
 2. 在任意已认证控制端构建并发布一个 GCS bootstrap release（script、source archive、wheelhouse、input manifest）。
 3. 创建下一块 v6e-16 时传入 startup script；等待四机 READY。
-4. 实现/验证多主机 checkpoint contract，运行 P0/P1。
-5. 向用户报告实测启动、compile、吞吐、save/upload/restore 时间，再请求 P2 发射确认。
+4. 只运行一次有唯一输出 prefix 的 checkpoint-contract smoke；通过后在干净
+   local root 上执行 resume + 一次真实 update，并写入
+   `CHECKPOINT_CONTRACT_PASS.json`。
+5. 仅在该 proof 存在时运行 P1；再向用户报告实测启动、compile、吞吐、
+   save/upload/restore 时间并请求 P2 发射确认。

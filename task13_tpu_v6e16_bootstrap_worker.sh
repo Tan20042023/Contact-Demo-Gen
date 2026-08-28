@@ -72,10 +72,15 @@ from pathlib import Path
 import jax, lerobot, torchcodec, orbax.checkpoint as ocp
 root = Path("$INPUT")
 print(json.dumps({
-  "schema": "task13-v6e16-ready-v2", "host": socket.gethostname(),
+  # Bootstrap is deliberately runtime-neutral.  Calling jax.devices() or
+  # jax.local_device_count() here initializes the TPU backend; that operation
+  # requires all four hosts to participate and can leave a stray process
+  # holding the slice when a one-worker retry times out.  Device discovery and
+  # the collective belong exclusively to the all-worker launch preflight.
+  "schema": "task13-v6e16-ready-v3", "host": socket.gethostname(),
   "source_uri": "$TASK13_TPU_CODE_URI", "source_sha256": "$TASK13_TPU_CODE_SHA256",
   "input_uri": "$TASK13_TPU_INPUT_URI", "input_bytes": sum(p.stat().st_size for p in root.rglob('*') if p.is_file()),
-  "jax": jax.__version__, "local_device_count": jax.local_device_count(),
+  "jax": jax.__version__, "tpu_runtime_initialized": False,
   "orbax": ocp.__version__,
 }, sort_keys=True))
 PY

@@ -27,6 +27,7 @@ the Spot-VM recovery tutorial and the validated Task13 TPU run on 2026-08-26.
 | Current Task13 side-branch inputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/input_assets/` |
 | Current Task13 side-branch outputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/runs/` — use a new per-run child |
 | TPU branch | `task13-tpu-feasibility-prep` in `Tan20042023/Contact-Demo-Gen` |
+| Last archived source candidate | **Not qualified:** Git `6b56f17a1920516c3430b58d265b728621cbfe23`; GCS `bootstrap/6b56f17a1920516c3430b58d265b728621cbfe23/source-layout-v2.tar.gz`; SHA-256 `5134d2c3f525e09b2beab27e3db2b5adb972be8c4664e57cd97e8fbe631cc2fd`. The pipeline repair is local and must be reviewed, committed and archived as a new release before any next launch. |
 
 Do not assume a future Spot allocation has the same IP, zone, topology, device
 count, service account, or capacity. `v6e-4` is the last *qualified* recovery
@@ -105,7 +106,8 @@ versions validated here unless a new compatibility review approves a change:
 
 - `jax[tpu]==0.5.3`, matching `jaxlib`/`libtpu`
 - `flax==0.10.2`
-- `orbax-checkpoint==0.11.13`
+- `orbax-checkpoint==0.11.24` (**candidate; checkpoint-contract qualification
+  remains required**)
 - `torch==2.7.1`, `torchvision==0.22.1`, `torchcodec==0.5.*`
 - `lerobot==0.4.4`
 - system package `ffmpeg` (TorchCodec requires its shared libraries)
@@ -144,11 +146,22 @@ They either assert `process_count == 1`, refer to old paths/regions, or implemen
 the invalid single-host checkpoint protocol. Keep them only as audit history
 until an explicit cleanup decision.
 
-`task13_tpu_v6e16_bootstrap_all.sh` is the intended controller shape. Its
+`task13_tpu_v6e16_bootstrap_all.ps1` is the currently reviewed controller. Its
 worker stages the immutable input URI to a read-only local cache and verifies
-the release byte count before emitting readiness data; its first real
-all-worker `READY.json` test is still a required gate. A controller must reject
-`READY` plus `UNHEALTHY_MAINTENANCE` before copying or launching anything.
+the release byte count before emitting readiness data. Bootstrap must be
+runtime-neutral: it may import package versions but must not call
+`jax.devices()` or `jax.local_device_count()`. The controller validates four
+`READY.json` records before a separate, all-worker preflight initializes JAX.
+A controller must reject `READY` plus `UNHEALTHY_MAINTENANCE` before copying or
+launching anything.
+
+On a VM that already has an environment from an earlier release, do not assume
+its editable package points at the newly extracted checkout. Launch against the
+immutable checkout explicitly, for example with
+`PYTHONPATH="${REPO}/openpi/src${PYTHONPATH:+:${PYTHONPATH}}"`, and record the
+loaded `openpi.training.task13_tpu_configs.__file__` in the preflight. A fresh
+bootstrap may install the project editable as usual; this rule prevents a
+Spot-reuse accident from silently loading stale source.
 
 ## Inputs, outputs, and checkpointing
 
@@ -157,20 +170,30 @@ all-worker `READY.json` test is still a required gate. A controller must reject
   keep it separate from outputs. For Task13, the cached input root is
   `/home/tanjunhao/task13_input_assets`.
 - Never write into `input_assets`.
-- Do **not** write Orbax 0.11.13 checkpoints directly to `gs://`. GCS object
-  prefixes are not true empty directories; Orbax fails while initializing its
-  temporary prefix before state is written.
+- The sealed Task13 bundle retains its original internal layout. TPU configs
+  must use `datasets/task13/v1/lerobot/<task>/<condition>` for LeRobot data and
+  `outputs/task13_policy_matrix/v1/assets_full/<task>/<condition>` for assets.
+  The placeholder repo ID `local_repo` is valid only when that local root
+  contains `meta/info.json`; otherwise LeRobot falls back to the Hugging Face
+  Hub. Require an `HF_HUB_OFFLINE=1` construction preflight on every worker.
+- Do **not** write the unqualified Task13 multi-host Orbax checkpoint directly
+  to `gs://`. The earlier 0.11.13 path failed while initializing its temporary
+  prefix; 0.11.24 and the local-contribution candidate are not substitutes for
+  a passing recovery test.
 - A single-host local Orbax directory/`UPLOAD_COMPLETE` sidecar is valid only
   for single-host slices. It is **not valid for v6e-16**: each TPU VM has a
   separate local filesystem and Orbax writes process-specific state.
-- For v6e-16, each process must upload its completed local contribution under
+- The current v6e-16 candidate attempts to upload each completed local
+  contribution under
   `checkpoints/<step>/worker-<index>/`, with a byte count and SHA manifest.
   Worker 0 writes `COMMITTED.json` only after all four manifests have been
   verified. Restore only a step with that commit record, materialize the needed
   union on every worker, then run an actual restore plus one training step.
-- Until that exact all-worker save/upload/restore test passes, **no 1k or 30k
-  Task13 run may start**. Do not pre-create a checkpoint directory unless a
-  real `resume=True` policy is selected.
+- Until the exact all-worker save/upload/restore test passes and writes a
+  source-SHA-specific `CHECKPOINT_CONTRACT_PASS.json`, **no 1k or 30k Task13
+  run may start**. The launcher rejects a formal configuration without that
+  proof and rejects a non-empty initial output prefix. Do not pre-create a
+  checkpoint directory unless a real `resume=True` policy is selected.
 
 Use 2,500 steps for the first P1 checkpoint interval; measure save plus upload
 time, then freeze either 2,500 or 5,000 for P2 before it starts. For a 100-step
@@ -184,6 +207,20 @@ training and all-worker commit logs. Record compilation time separately from
 steady-state step time. The validated `v6e-4` smoke took about two minutes for
 first compile, then about 1.8 steps/s; the `v6e-16` Hammer P0 achieved about
 1.3 steps/s after compilation. Its checkpoint size and duration are unmeasured.
+
+On the Windows control host, `task13_tpu_ready_watcher.ps1` can persistently
+poll the queued resource and node, and writes its durable result to
+`task13_tpu_ready_state.json`. Use its `-InstallScheduledTask` mode when the
+watch must survive an agent or terminal exit. It emits its ready event only
+after `state=READY` **and** `health=HEALTHY`, then continues monitoring for a
+later preemption; a state JSON file with `ready: false` is not launch
+authorization. `SUSPENDED` with `stateInitiator=SERVICE` is a
+terminal service-side deletion: Cloud TPU will not allocate that queue again.
+With an explicit standing approval for Spot recovery, its `-AutoRecreate` mode
+may invoke the reviewed `G:\Ego\recreate-tpu-after-preemption.ps1`; it must not
+recreate merely because a queue is absent, since that can be intentional cleanup.
+The local watcher cannot wake a hosted Codex conversation directly, so a later
+agent must read the JSON handoff before continuing.
 
 On preemption:
 

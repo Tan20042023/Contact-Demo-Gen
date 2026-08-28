@@ -4,6 +4,9 @@ param(
     [Parameter(Mandatory)] [string]$Config,
     [Parameter(Mandatory)] [string]$GcsRunUri,
     [Parameter(Mandatory)] [string]$SourceSha256,
+    [ValidateSet('checkpoint-contract', 'formal')]
+    [string]$Purpose = 'checkpoint-contract',
+    [string]$CheckpointContractProofUri,
     [string[]]$TrainArgs = @(),
     [switch]$Resume,
     [string]$TpuName = 'tanjunhao-tpu',
@@ -20,6 +23,23 @@ $ErrorActionPreference = 'Stop'
 $runUri = $GcsRunUri.TrimEnd('/')
 if ($runUri -notmatch '^gs://') { throw "GcsRunUri must be a gs:// prefix: $GcsRunUri" }
 if (-not (Test-Path -LiteralPath $KeyPath)) { throw "Compute Engine SSH key not found: $KeyPath" }
+if ($Purpose -eq 'checkpoint-contract' -and $Config -notmatch '^task13_tpu_smoke_') {
+    throw "checkpoint-contract launches must use a 100-step task13_tpu_smoke_* config, not $Config"
+}
+if ($Purpose -eq 'formal') {
+    if ($Config -notmatch '^task13_tpu_technical_') {
+        throw "formal launches must use a task13_tpu_technical_* config, not $Config"
+    }
+    if (-not $CheckpointContractProofUri -or $CheckpointContractProofUri -notmatch '^gs://') {
+        throw 'Formal launch requires a gs:// CHECKPOINT_CONTRACT_PASS.json proof URI from the same source release.'
+    }
+    $proofText = & gcloud storage cat $CheckpointContractProofUri 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "Checkpoint contract proof is unreadable: $CheckpointContractProofUri" }
+    try { $proof = ($proofText | Out-String | ConvertFrom-Json) } catch { throw "Checkpoint contract proof is not valid JSON: $CheckpointContractProofUri" }
+    if ($proof.status -ne 'PASS' -or $proof.source_sha256 -ne $SourceSha256 -or $proof.process_count -ne 4) {
+        throw 'Checkpoint contract proof does not PASS for this source SHA and four-worker topology.'
+    }
+}
 
 $node = gcloud compute tpus tpu-vm describe $TpuName "--project=$Project" "--zone=$Zone" --format=json | ConvertFrom-Json
 if ($node.state -ne 'READY' -or $node.health -ne 'HEALTHY') {
@@ -33,6 +53,12 @@ $latestExists = $false
 if ($LASTEXITCODE -eq 0) { $latestExists = $true }
 if ($Resume -and -not $latestExists) { throw "Resume requested but LATEST.json is absent: $runUri" }
 if (-not $Resume -and $latestExists) { throw "Committed output already exists; refuse initial launch: $runUri" }
+if (-not $Resume) {
+    $existing = @(& gcloud storage ls --recursive "$runUri/**" 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $existing.Count -gt 0) {
+        throw "Initial launch refuses a non-empty output prefix (including partial checkpoints): $runUri"
+    }
+}
 
 $repoRel = "task13_v6e16/repo-$($SourceSha256.Substring(0, 12))/openpi"
 $runRootRel = "task13_v6e16/runs/$RunId"
@@ -77,6 +103,11 @@ function Invoke-Workers([string]$Phase, [string]$RemoteCommand) {
 
 $preflight = @"
 set -euo pipefail
+if pgrep -af 'scripts/train.py' >/dev/null; then
+  echo 'LAUNCH_PREFLIGHT_FAIL: an existing train.py process is still present on this worker' >&2
+  pgrep -af 'scripts/train.py' >&2
+  exit 19
+fi
 export PYTHONPATH="`$HOME/$repoRel/src"
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
 export TASK13_TPU_INPUT_ROOT="`$HOME/task13_v6e16/input_assets"
@@ -101,4 +132,4 @@ nohup "`$HOME/task13_v6e16/venv/bin/python" scripts/train.py '$Config'$resumeArg
 echo TRAIN_PID=`$!
 "@
 Invoke-Workers 'launch' $train
-Write-Host "LAUNCH_SUBMITTED run_id=$RunId uri=$runUri config=$Config resume=$($Resume.IsPresent)"
+Write-Host "LAUNCH_SUBMITTED purpose=$Purpose run_id=$RunId uri=$runUri config=$Config resume=$($Resume.IsPresent)"

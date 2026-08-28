@@ -57,8 +57,24 @@ $deadline = (Get-Date).AddSeconds($ReadyTimeoutSeconds)
 while ((Get-Date) -lt $deadline) {
     $ready = 0
     foreach ($ip in $ips) {
-        & ssh -i $KeyPath -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 "${SshUser}@${ip}" "test -s `$HOME/task13_v6e16/bootstrap/$RunId/READY.json" 2>$null
-        if ($LASTEXITCODE -eq 0) { $ready++ }
+        $readyJson = & ssh -i $KeyPath -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 "${SshUser}@${ip}" "cat `$HOME/task13_v6e16/bootstrap/$RunId/READY.json" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $readyJson) {
+            try {
+                $record = ($readyJson | Out-String | ConvertFrom-Json)
+                if (
+                    $record.schema -eq 'task13-v6e16-ready-v3' -and
+                    $record.source_sha256 -eq $CodeSha256 -and
+                    $record.input_bytes -eq $InputBytes -and
+                    $record.tpu_runtime_initialized -eq $false
+                ) {
+                    $ready++
+                } else {
+                    Write-Host "BOOTSTRAP_READY_REJECTED host=$ip (schema, source, input, or runtime-neutrality mismatch)"
+                }
+            } catch {
+                Write-Host "BOOTSTRAP_READY_REJECTED host=$ip (invalid JSON)"
+            }
+        }
     }
     if ($ready -eq 4) { Write-Host "BOOTSTRAP_ALL_READY run_id=$RunId"; exit 0 }
     Start-Sleep -Seconds 30
