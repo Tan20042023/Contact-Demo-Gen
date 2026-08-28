@@ -25,6 +25,7 @@ import openpi.training.config as _config
 import openpi.training.data_loader as _data_loader
 import openpi.training.optimizer as _optimizer
 import openpi.training.sharding as sharding
+import openpi.training.tpu_checkpointing as tpu_checkpointing
 import openpi.training.utils as training_utils
 import openpi.training.weight_loaders as _weight_loaders
 
@@ -199,6 +200,8 @@ def main(config: _config.TrainConfig):
     tpu_multihost = os.environ.get("TASK13_TPU_MULTIHOST") == "1"
     if tpu_multihost:
         jax.distributed.initialize()
+        if config.resume:
+            tpu_checkpointing.materialize_latest_committed(config.checkpoint_dir)
     init_logging()
     logging.info(f"Running on: {platform.node()}")
 
@@ -300,6 +303,20 @@ def main(config: _config.TrainConfig):
         should_save = (checkpoint_step % config.save_interval == 0 and checkpoint_step > start_step) or is_terminal_step
         if should_save:
             _checkpoints.save_state(checkpoint_manager, train_state, data_loader, checkpoint_step)
+            if tpu_multihost:
+                # A committed GCS checkpoint is the only recoverable state for
+                # a Spot multi-VM slice.  Do not resume training while a local
+                # Orbax write or its upload remains unfinished.
+                checkpoint_manager.wait_until_finished()
+                tpu_checkpointing.upload_and_commit(
+                    config.checkpoint_dir,
+                    checkpoint_step,
+                    provenance={
+                        "config_name": config.name,
+                        "exp_name": config.exp_name,
+                        "source_sha256": os.environ.get("TASK13_TPU_SOURCE_SHA256", "unknown"),
+                    },
+                )
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()

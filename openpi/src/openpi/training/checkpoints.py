@@ -4,12 +4,14 @@ import asyncio
 import concurrent.futures as futures
 import dataclasses
 import logging
+import os
 from typing import Protocol
 
 from etils import epath
 import jax
 import orbax.checkpoint as ocp
 import orbax.checkpoint.future as future
+from orbax.checkpoint import options as ocp_options
 
 from openpi.shared import array_typing as at
 import openpi.shared.normalize as _normalize
@@ -37,6 +39,25 @@ def initialize_checkpoint_dir(
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    options = ocp.CheckpointManagerOptions(
+        max_to_keep=1,
+        keep_period=keep_period,
+        create=False,
+        async_options=ocp.AsyncOptions(timeout_secs=7200),
+    )
+    # TPU v6e workers have independent local disks.  In this mode every host
+    # is a local primary; the caller transports each completed contribution to
+    # GCS and creates the cross-host commit record.
+    if os.environ.get("TASK13_TPU_MULTIHOST") == "1":
+        options = dataclasses.replace(
+            options,
+            multiprocessing_options=ocp_options.MultiprocessingOptions(
+                primary_host=None,
+                barrier_sync_key_prefix="task13-local-orbax-",
+            ),
+            enable_per_process_directory_creation=True,
+        )
+
     mngr = ocp.CheckpointManager(
         checkpoint_dir,
         item_handlers={
@@ -44,12 +65,7 @@ def initialize_checkpoint_dir(
             "train_state": ocp.PyTreeCheckpointHandler(),
             "params": ocp.PyTreeCheckpointHandler(),
         },
-        options=ocp.CheckpointManagerOptions(
-            max_to_keep=1,
-            keep_period=keep_period,
-            create=False,
-            async_options=ocp.AsyncOptions(timeout_secs=7200),
-        ),
+        options=options,
     )
 
     # Special case: the checkpoint directory exists and the user requests to resume training, but the training run did
