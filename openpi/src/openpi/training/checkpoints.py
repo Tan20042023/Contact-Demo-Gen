@@ -19,6 +19,17 @@ import openpi.training.data_loader as _data_loader
 import openpi.training.utils as training_utils
 
 
+class _LocalProcessArrayMetadataValidator:
+    """Accept exactly one metadata record in a worker-local TPU shard."""
+
+    def validate_all_array_metadatas(self, array_metadatas):
+        if len(array_metadatas) != 1:
+            raise ValueError(
+                "A worker-local Task13 TPU checkpoint must contain metadata from exactly one process; "
+                f"found {len(array_metadatas)}."
+            )
+
+
 def initialize_checkpoint_dir(
     checkpoint_dir: epath.Path | str, *, keep_period: int | None, overwrite: bool, resume: bool
 ) -> tuple[ocp.CheckpointManager, bool]:
@@ -39,31 +50,39 @@ def initialize_checkpoint_dir(
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    tpu_multihost = os.environ.get("TASK13_TPU_MULTIHOST") == "1"
     options = ocp.CheckpointManagerOptions(
         max_to_keep=1,
         keep_period=keep_period,
         create=False,
+        enable_async_checkpointing=not tpu_multihost,
         async_options=ocp.AsyncOptions(timeout_secs=7200),
     )
-    # TPU v6e workers have independent local disks.  In this mode every host
-    # is a local primary; the caller transports each completed contribution to
-    # GCS and creates the cross-host commit record.
-    if os.environ.get("TASK13_TPU_MULTIHOST") == "1":
+    # TPU v6e workers have independent local disks.  An Orbax manager must
+    # therefore be a *single-process* manager on each host: ``primary_host``
+    # alone does not isolate the manager, and otherwise its finalize thread
+    # still participates in the four-host global barrier while looking for a
+    # directory that only exists on its local disk.  The caller transports the
+    # four independently completed contributions to GCS and commits them with
+    # the explicit Task13 manifest protocol.
+    if tpu_multihost:
+        process_index = jax.process_index()
         options = dataclasses.replace(
             options,
             multiprocessing_options=ocp_options.MultiprocessingOptions(
-                primary_host=jax.process_index(),
-                active_processes={jax.process_index()},
-                barrier_sync_key_prefix=f"task13-local-orbax-{jax.process_index()}-",
+                primary_host=process_index,
+                active_processes={process_index},
+                barrier_sync_key_prefix=f"task13-local-orbax-{process_index}-",
             ),
         )
 
+    pytree_kwargs = {"array_metadata_validator": _LocalProcessArrayMetadataValidator()} if tpu_multihost else {}
     mngr = ocp.CheckpointManager(
         checkpoint_dir,
         item_handlers={
             "assets": CallbackHandler(),
-            "train_state": ocp.PyTreeCheckpointHandler(),
-            "params": ocp.PyTreeCheckpointHandler(),
+            "train_state": ocp.PyTreeCheckpointHandler(**pytree_kwargs),
+            "params": ocp.PyTreeCheckpointHandler(**pytree_kwargs),
         },
         options=options,
     )
