@@ -71,7 +71,7 @@ def initialize_checkpoint_dir(
                 primary_host=None,
                 barrier_sync_key_prefix="task13-local-orbax-",
             ),
-            # Orbax >=0.11.24 scopes its asynchronous directory and signal
+            # Orbax >=0.11.23 scopes its asynchronous directory and signal
             # setup to the local process in this mode.  This is required when
             # every v6e worker writes the same logical step to a different
             # local filesystem before the explicit GCS shard transport.
