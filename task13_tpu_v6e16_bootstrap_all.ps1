@@ -25,6 +25,19 @@ if ($node.state -ne 'READY' -or $node.health -ne 'HEALTHY') {
 $ips = @($node.networkEndpoints | ForEach-Object { $_.accessConfig.externalIp } | Where-Object { $_ })
 if ($ips.Count -ne 4) { throw "Expected four v6e-16 worker IPs; found $($ips.Count)" }
 
+# Spot recreations can reuse an external IP whose previous TPU VM had a
+# different SSH host key.  The IP list above was obtained from the authoritative
+# Cloud TPU node description, so remove only those stale local records before
+# the first OpenSSH connection records the new keys with accept-new.  Do not
+# disable host-key checking globally.
+$knownHosts = Join-Path $env:USERPROFILE '.ssh\known_hosts'
+foreach ($ip in $ips) {
+    if (Test-Path -LiteralPath $knownHosts) {
+        & ssh-keygen -R $ip -f $knownHosts *> $null
+        & ssh-keygen -R "[$ip]:22" -f $knownHosts *> $null
+    }
+}
+
 # This gcloud call publishes the local Compute Engine public key for the actual
 # TPU account.  Windows gcloud may use PuTTY and return after a host-key prompt;
 # OpenSSH below performs the real noninteractive host connection and verification.

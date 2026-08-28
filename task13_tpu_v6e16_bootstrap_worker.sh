@@ -15,13 +15,33 @@ VENV="${ROOT}/venv"
 INPUT="${TASK13_TPU_INPUT_ROOT:-${ROOT}/input_assets}"
 STATE="${ROOT}/bootstrap/${TASK13_TPU_RUN_ID}"
 READY="${STATE}/READY.json"
-ORBAX_VERSION="0.11.24"
+# 0.11.23 is the first release with per-process directory creation and still
+# supports the pinned jax==0.5.3 runtime.  0.11.24 calls
+# jax.monitoring.record_scalar during replica-slice saves, an API absent from
+# JAX 0.5.3, so do not advance this pin without a new compatibility review.
+ORBAX_VERSION="0.11.23"
 mkdir -p "$STATE"
 
 if ! command -v python3.11 >/dev/null || ! command -v ffmpeg >/dev/null; then
   export DEBIAN_FRONTEND=noninteractive
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq python3.11 python3.11-venv ffmpeg git
+  # A freshly created TPU VM can still be running unattended-upgrades.  Do not
+  # fail the whole four-worker bootstrap on its transient dpkg lock; wait with
+  # a bounded retry budget and then surface the real package-manager error.
+  installed=0
+  for attempt in $(seq 1 30); do
+    if sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; then
+      echo "BOOTSTRAP_WAIT: dpkg lock held (attempt ${attempt}/30)" >&2
+      sleep 10
+      continue
+    fi
+    if sudo dpkg --configure -a && sudo apt-get update -qq && sudo apt-get install -y -qq python3.11 python3.11-venv ffmpeg git; then
+      installed=1
+      break
+    fi
+    echo "BOOTSTRAP_RETRY: system package install failed (attempt ${attempt}/30)" >&2
+    sleep 10
+  done
+  [[ "$installed" == 1 ]] || { echo 'BOOTSTRAP_FAIL: system package installation did not complete' >&2; exit 8; }
 fi
 
 archive="${STATE}/source.tar.gz"

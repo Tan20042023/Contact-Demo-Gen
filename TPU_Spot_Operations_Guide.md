@@ -106,8 +106,9 @@ versions validated here unless a new compatibility review approves a change:
 
 - `jax[tpu]==0.5.3`, matching `jaxlib`/`libtpu`
 - `flax==0.10.2`
-- `orbax-checkpoint==0.11.24` (**candidate; checkpoint-contract qualification
-  remains required**)
+- `orbax-checkpoint==0.11.23` (the first release with per-process directory
+  creation; compatible with pinned `jax==0.5.3`; checkpoint-contract
+  qualification remains required)
 - `torch==2.7.1`, `torchvision==0.22.1`, `torchcodec==0.5.*`
 - `lerobot==0.4.4`
 - system package `ffmpeg` (TorchCodec requires its shared libraries)
@@ -178,8 +179,9 @@ Spot-reuse accident from silently loading stale source.
   Hub. Require an `HF_HUB_OFFLINE=1` construction preflight on every worker.
 - Do **not** write the unqualified Task13 multi-host Orbax checkpoint directly
   to `gs://`. The earlier 0.11.13 path failed while initializing its temporary
-  prefix; 0.11.24 and the local-contribution candidate are not substitutes for
-  a passing recovery test.
+  prefix; 0.11.24 is incompatible with pinned JAX 0.5.3 during save, and the
+  0.11.23 local-contribution candidate is not a substitute for a passing
+  recovery test.
 - A single-host local Orbax directory/`UPLOAD_COMPLETE` sidecar is valid only
   for single-host slices. It is **not valid for v6e-16**: each TPU VM has a
   separate local filesystem and Orbax writes process-specific state.

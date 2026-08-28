@@ -26,7 +26,7 @@ qualified training release.
 | Failure | Evidence | Permanent correction |
 | --- | --- | --- |
 | An unverified per-worker Orbax design was exercised in the 101-step smoke. | Workers blocked in Orbax save/finalize; no `COMMITTED.json` or `LATEST.json`. | A standalone checkpoint-contract gate is mandatory before any normal training. |
-| Orbax 0.11.13 lacked the per-process-directory option. | API rejected the option. | Pin the reviewed candidate version (0.11.24) only in the isolated TPU environment; qualify it with the gate before relying on it. |
+| Orbax 0.11.13 lacked the per-process-directory option; 0.11.24 calls a JAX 0.5.3-missing monitoring API during save. | 0.11.13 rejected the option; 0.11.24 failed with `jax.monitoring.record_scalar` absent. | Pin Orbax 0.11.23: it is the first release with the needed per-process signalling, declares `jax >= 0.5.0`, and does not make that monitoring call. Still qualify it with the gate before relying on it. |
 | A one-worker diagnostic initialized JAX and retained the TPU runtime after timeout. | Later bootstrap reported the TPU already in use by that diagnostic PID. | Bootstrap must not enumerate TPU devices; only an all-worker preflight may initialize JAX. No ad-hoc JAX/Orbax probes on a single worker. |
 | A retry targeted one worker after a distributed initialization failure. | That worker waited for the missing peers. | Bootstrap and every JAX-initializing check are all-four-worker operations; individual retries are limited to non-JAX file transfer/inspection. |
 | Partial GCS prefixes were too easy to reuse. | R3 has diagnostic worker-0 data but no commit marker. | A new initial launch rejects every non-empty run prefix; resume requires `LATEST.json`. |
