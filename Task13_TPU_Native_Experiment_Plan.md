@@ -86,11 +86,11 @@ preflight → launch”，而不再临时安装、临时 clone、临时找输入
    至少一个真实训练 step。
 
 2026-08-28 的 v6e-16 结果：四机 collective、分片 data loader 与 Hammer
-`nominal_src` 的 100-step 真训练通过（稳态约 1.3 step/s）；但三种候选
-checkpoint 路径均未得到四机保存、GCS commit、干净 materialize、restore 后
-再更新的完整证据。失败记录和修复门禁见
-`Task13_TPU_Pipeline_Repair.md`。因此 checkpoint 契约仍是 P0 的唯一阻塞门，
-不能以“训练已跑通”替代。
+`nominal_src` 的 100-step 真训练与 checkpoint 契约已通过：四机原生共享 GCS
+Orbax 在 step 100 提交 48 个对象，干净四机 restore 后全部完成 step 101 的真实
+更新。proof 为
+`runs/checkpoint_contract_60f7a53_20260828a/hammer_nail_nominal_src/provenance/CHECKPOINT_CONTRACT_PASS.json`。
+失败记录与后续门禁见 `Task13_TPU_Pipeline_Repair.md`；P1/P2 仍须用户明确批准。
 
 checkpoint interval 先设为 **2,500 steps**，并在 P1 记录 save+upload 时间。
 理由是 Spot 下平均最多损失约 1,250 steps，较原 5,000 更适合初期不稳定的
@@ -102,8 +102,8 @@ checkpoint interval 先设为 **2,500 steps**，并在 P1 记录 save+upload 时
 - 一个 `v6e-16` slice 同时只运行一个 cell；每个 cell 有独立 run prefix、
   日志和 checkpoint manifest。
 - 只有 P0/P1 通过后才启动 P2。P2/P3 的 start/stop 由用户明确批准。
-- 一块 slice 被抢占：不等它恢复；新建同规格 slice，自动 bootstrap，然后从
-  最近的 `COMMITTED.json` 恢复。
+- 一块 slice 被抢占：立即停止，保留 state/log/provenance，等待用户明确决定是否
+  新建同规格 slice 或从最近的 `COMMITTED.json` 恢复。
 - 需要吞吐时，第二块 `v6e-16` 跑另一个 cell。不得把同一个 cell 的 checkpoint
   移到不同 topology 或从 GPU checkpoint 恢复。
 - 不使用 `v6e-32`，除非以后专门完成 batch/mesh scaling 实验并显示它对该模型
@@ -122,8 +122,8 @@ checkpoint interval 先设为 **2,500 steps**，并在 P1 记录 save+upload 时
 1. 完成并封存 GCS `input_assets` 上传与 checksum 验证。
 2. 在任意已认证控制端构建并发布一个 GCS bootstrap release（script、source archive、wheelhouse、input manifest）。
 3. 创建下一块 v6e-16 时传入 startup script；等待四机 READY。
-4. 只运行一次有唯一输出 prefix 的 checkpoint-contract smoke；通过后在干净
-   local root 上执行 resume + 一次真实 update，并写入
+4. 只运行一次有唯一输出 prefix 的 checkpoint-contract smoke；通过后在同一原生
+   shared-GCS root 上执行 resume + 一次真实 update，并写入
    `CHECKPOINT_CONTRACT_PASS.json`。
 5. 仅在该 proof 存在时运行 P1；再向用户报告实测启动、compile、吞吐、
    save/upload/restore 时间并请求 P2 发射确认。

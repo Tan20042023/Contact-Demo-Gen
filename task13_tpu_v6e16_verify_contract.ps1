@@ -1,9 +1,10 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [string]$RunId,
+    [Parameter(Mandatory)] [string]$ResumeRunId,
     [Parameter(Mandatory)] [string]$GcsRunUri,
     [Parameter(Mandatory)] [string]$SourceSha256,
-    [Parameter(Mandatory)] [int]$Step,
+    [Parameter(Mandatory)] [int]$InitialStep,
+    [Parameter(Mandatory)] [int]$ResumeStep,
     [string]$TpuName = 'tanjunhao-tpu',
     [string]$Project = 'whyu01',
     [string]$Zone = 'us-east1-d',
@@ -33,40 +34,57 @@ function Read-GcsJson([string]$Uri) {
     try { return ($content | Out-String | ConvertFrom-Json) } catch { throw "Invalid JSON at $Uri" }
 }
 
-$commit = Read-GcsJson "$runUri/checkpoints/$Step/COMMITTED.json"
+$initialCommit = Read-GcsJson "$runUri/checkpoints/$InitialStep/COMMITTED.json"
+$resumeCommit = Read-GcsJson "$runUri/checkpoints/$ResumeStep/COMMITTED.json"
 $latest = Read-GcsJson "$runUri/LATEST.json"
-if ($commit.step -ne $Step -or $latest.step -ne $Step -or $commit.process_count -ne 4 -or $latest.process_count -ne 4) {
-    throw 'COMMITTED.json/LATEST.json do not describe the requested four-worker step.'
+if (
+    $initialCommit.step -ne $InitialStep -or
+    $resumeCommit.step -ne $ResumeStep -or
+    $latest.step -ne $ResumeStep -or
+    $initialCommit.process_count -ne 4 -or
+    $resumeCommit.process_count -ne 4 -or
+    $latest.process_count -ne 4 -or
+    $initialCommit.object_count -le 0 -or
+    $resumeCommit.object_count -le 0
+) {
+    throw 'The initial or resumed native-GCS commit metadata is incomplete for the four-worker topology.'
 }
-if ($commit.provenance.source_sha256 -ne $SourceSha256) {
-    throw "Committed source SHA differs from requested source SHA."
+if ($initialCommit.provenance.source_sha256 -ne $SourceSha256 -or $resumeCommit.provenance.source_sha256 -ne $SourceSha256) {
+    throw 'Committed source SHA differs from the requested source SHA.'
 }
 
+# The native shared-GCS checkpoint is one Orbax root, not four worker-local
+# checkpoint trees. Confirm that the latest finalized root contains metadata
+# from every JAX process. (The original root may be rotated after resume.)
+$objects = @(& gcloud storage ls --recursive "$($resumeCommit.checkpoint_uri)/**" 2>$null)
+if ($LASTEXITCODE -ne 0 -or $objects.Count -eq 0) {
+    throw "The resumed native-GCS checkpoint root is unreadable or empty: $($resumeCommit.checkpoint_uri)"
+}
 foreach ($worker in 0..3) {
-    $manifest = Read-GcsJson "$runUri/checkpoints/$Step/worker-$worker/manifest.json"
-    if ($manifest.step -ne $Step -or $manifest.worker -ne $worker -or $manifest.process_count -ne 4 -or @($manifest.files).Count -eq 0) {
-        throw "Invalid or empty manifest for worker $worker."
+    if (-not ($objects | Where-Object { $_ -match "/array_metadatas/process_$worker(?:$|/)" })) {
+        throw "No native Orbax array metadata witness for process $worker."
     }
 }
 
 foreach ($ip in $ips) {
-    & ssh -i $KeyPath -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 "${SshUser}@${ip}" "grep -Fq 'TASK13_POST_RESTORE_UPDATE_PASS' `$HOME/task13_v6e16/logs/$RunId/train.log"
-    if ($LASTEXITCODE -ne 0) { throw "No post-restore update witness in $ip train log for run $RunId." }
+    & ssh -i $KeyPath -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 "${SshUser}@${ip}" "grep -Fq 'TASK13_POST_RESTORE_UPDATE_PASS' `$HOME/task13_v6e16/logs/$ResumeRunId/train.log"
+    if ($LASTEXITCODE -ne 0) { throw "No post-restore update witness in $ip train log for run $ResumeRunId." }
 }
 
 $proof = [ordered]@{
-    schema = 'task13-v6e16-checkpoint-contract-v1'
+    schema = 'task13-v6e16-native-gcs-checkpoint-contract-v2'
     status = 'PASS'
     source_sha256 = $SourceSha256
     process_count = 4
     tpu_name = $TpuName
     zone = $Zone
-    checkpoint_step = $Step
+    initial_checkpoint_step = $InitialStep
+    resumed_checkpoint_step = $ResumeStep
     run_uri = $runUri
-    resume_run_id = $RunId
+    resume_run_id = $ResumeRunId
     verified_utc = (Get-Date).ToUniversalTime().ToString('o')
 }
-$tmp = Join-Path $env:TEMP "task13-checkpoint-contract-$RunId.json"
+$tmp = Join-Path $env:TEMP "task13-checkpoint-contract-$ResumeRunId.json"
 $proof | ConvertTo-Json | Set-Content -LiteralPath $tmp -Encoding utf8NoBOM
 $proofUri = "$runUri/provenance/CHECKPOINT_CONTRACT_PASS.json"
 & gcloud storage cp $tmp $proofUri

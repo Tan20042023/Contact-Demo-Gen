@@ -1,8 +1,9 @@
 # Task13 TPU pipeline repair record
 
-**Status: training paused.** This document is the launch contract for the TPU
-side branch after the 2026-08-28 checkpoint investigation. It supersedes any
-informal instruction to repeatedly retry the 101-step smoke.
+**Status: P0 checkpoint contract qualified; formal training not started.** This
+document is the launch contract for the TPU side branch after the 2026-08-28
+checkpoint investigation. It supersedes any informal instruction to repeatedly
+retry the 101-step smoke.
 
 ## What was demonstrated
 
@@ -13,13 +14,17 @@ informal instruction to repeatedly retry the 101-step smoke.
   compilation).
 - The source archive, input cache and direct worker bootstrap path work without
   any 5090 runtime dependency.
+- Native shared-GCS Orbax checkpointing committed 48 objects at step 100;
+  four clean restores completed and all workers performed a verified step 101
+  update. The durable proof is
+  `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/runs/checkpoint_contract_60f7a53_20260828a/hammer_nail_nominal_src/provenance/CHECKPOINT_CONTRACT_PASS.json`.
 
 ## What is *not* demonstrated
 
-No all-worker checkpoint has saved, committed to GCS, been materialized on a
-fresh slice and restored into a real subsequent update. Therefore neither P1
-nor P2 is launchable. The current source release is a candidate, not a
-qualified training release.
+The checkpoint path is qualified for the recorded `v6e-16` / four-process
+topology. P1/P2 formal experiments still require their own explicit launch
+approval and fresh output prefixes; a Spot preemption remains a stop condition,
+not an authorization to recreate or resume automatically.
 
 ## Failures and their corrections
 

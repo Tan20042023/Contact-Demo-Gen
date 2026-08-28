@@ -27,18 +27,17 @@ the Spot-VM recovery tutorial and the validated Task13 TPU run on 2026-08-26.
 | Current Task13 side-branch inputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/input_assets/` |
 | Current Task13 side-branch outputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/runs/` — use a new per-run child |
 | TPU branch | `task13-tpu-feasibility-prep` in `Tan20042023/Contact-Demo-Gen` |
-| Current checkpoint-contract release | Git `e6dda50`; GCS `bootstrap/e6dda50/source-layout-v2.tar.gz`; SHA-256 `c9847bcd819ba707740c47a3cff8fa1ff1e3e6a57a6a87c7d16be5e6ac930d8c`. **It permits only the checkpoint-contract smoke and clean-resume validation; it is not yet a qualified formal-training release.** |
+| Current checkpoint-contract release | Git `60f7a53`; GCS `bootstrap/60f7a53/source-layout-v2.tar.gz`; SHA-256 `c1e6a96abc645b1d6abb66d4e64ad225946192c80a46e8a63cc97bd812af8c85`. Native shared-GCS contract passed: `runs/checkpoint_contract_60f7a53_20260828a/hammer_nail_nominal_src/provenance/CHECKPOINT_CONTRACT_PASS.json`. |
 
 Do not assume a future Spot allocation has the same IP, zone, topology, device
-count, service account, or capacity. `v6e-4` is the last *qualified* recovery
-profile. The most recent `v6e-16` run proved four-process JAX initialization,
-sharded LeRobot input, and a real 100-step Hammer forward/backward/update loop
-(all four workers completed, about 1.3 steps/s after compilation). It did **not**
-qualify checkpointing: the slice was preempted during the isolated one-step
-local save, before any state was made durable. Do not reuse its single-host
-launcher or checkpoint daemon unchanged. A real all-worker checkpoint-to-GCS-
-and-restore test remains mandatory before any long run. The TPU-native campaign,
-staging, and recovery contract live in `Task13_TPU_Native_Experiment_Plan.md`.
+count, service account, or capacity. The qualified Task13 profile is `v6e-16`
+in `us-east1-d`, with four JAX processes and 16 global devices. It passed a
+real Hammer 100-step update at about 1.3 steps/s after compilation, native
+shared-GCS Orbax save at step 100, clean four-worker restore, and one actual
+post-restore update plus committed step 101. This qualifies the *checkpoint
+pipeline*, not any unapproved formal experiment. Do not reuse the historical
+single-host launcher or checkpoint daemon. The TPU-native campaign, staging,
+and recovery contract live in `Task13_TPU_Native_Experiment_Plan.md`.
 
 ## Spot TPU lifecycle
 
@@ -214,9 +213,10 @@ post-update training step (100, not loop index 99).
 
 Run training under `nohup` or `tmux`, log into the local output root, and monitor
 training and all-worker commit logs. Record compilation time separately from
-steady-state step time. The validated `v6e-4` smoke took about two minutes for
-first compile, then about 1.8 steps/s; the `v6e-16` Hammer P0 achieved about
-1.3 steps/s after compilation. Its checkpoint size and duration are unmeasured.
+steady-state step time. The qualified `v6e-16` Hammer P0 achieved about 1.3
+steps/s after compilation. Its native GCS checkpoint wrote 48 objects and a
+clean restore read about 7.3 GiB per host in about 9.5 seconds; measure again
+for formal configurations rather than assuming the smoke result transfers.
 
 On the Windows control host, `task13_tpu_ready_watcher.ps1` can persistently
 poll the queued resource and node, and writes its durable result to
