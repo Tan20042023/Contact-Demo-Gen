@@ -25,7 +25,7 @@ qualified training release.
 
 | Failure | Evidence | Permanent correction |
 | --- | --- | --- |
-| An unverified per-worker Orbax design was exercised in the 101-step smoke. | Workers blocked in Orbax save/finalize; no `COMMITTED.json` or `LATEST.json`. | A standalone checkpoint-contract gate is mandatory before any normal training. |
+| A per-worker local Orbax design was exercised in the 101-step smoke. | Workers blocked in Orbax save/finalize; no `COMMITTED.json` or `LATEST.json`. | Use one native shared-GCS Orbax root for all processes; a standalone checkpoint-contract gate is mandatory before any normal training. |
 | Orbax 0.11.13 lacked the per-process-directory option; 0.11.24 calls a JAX 0.5.3-missing monitoring API during save. | 0.11.13 rejected the option; 0.11.24 failed with `jax.monitoring.record_scalar` absent. | Pin Orbax 0.11.23: it is the first release with the needed per-process signalling, declares `jax >= 0.5.0`, and does not make that monitoring call. Still qualify it with the gate before relying on it. |
 | A one-worker diagnostic initialized JAX and retained the TPU runtime after timeout. | Later bootstrap reported the TPU already in use by that diagnostic PID. | Bootstrap must not enumerate TPU devices; only an all-worker preflight may initialize JAX. No ad-hoc JAX/Orbax probes on a single worker. |
 | A retry targeted one worker after a distributed initialization failure. | That worker waited for the missing peers. | Bootstrap and every JAX-initializing check are all-four-worker operations; individual retries are limited to non-JAX file transfer/inspection. |
@@ -53,14 +53,14 @@ analysis step; it is not automatically retried with a new checkpoint design.
 
 For one immutable source SHA and the same 4-host v6e-16 topology:
 
-1. A 100-step smoke has exactly four non-empty `worker-<index>` contributions.
-2. Each contribution has a size/SHA manifest and every listed GCS object
-   verifies against it.
+1. A 100-step smoke finishes one native Orbax step at the same shared GCS
+   checkpoint root on all four processes.
+2. The finalized step has non-empty GCS objects only after all four calls to
+   `wait_until_finished()` return.
 3. A single `COMMITTED.json` and `LATEST.json` identify the same post-update
-   step and record `process_count=4` plus the source SHA.
-4. A clean local checkpoint root on all four workers materializes only its
-   required contribution, all workers restore, and one actual optimizer update
-   completes.
+   step, native checkpoint URI, `process_count=4` and source SHA.
+4. A clean four-worker resume opens that same GCS root, restores, and completes
+   one actual optimizer update.
 5. `task13_tpu_v6e16_verify_contract.ps1` writes
    `CHECKPOINT_CONTRACT_PASS.json` only after it has
    checked all four conditions. It includes source SHA, topology, config, step,

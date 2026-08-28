@@ -201,7 +201,7 @@ def main(config: _config.TrainConfig):
     if tpu_multihost:
         jax.distributed.initialize()
         if config.resume:
-            tpu_checkpointing.materialize_latest_committed(config.checkpoint_dir)
+            tpu_checkpointing.validate_latest_committed(str(config.checkpoint_dir))
     init_logging()
     logging.info(f"Running on: {platform.node()}")
 
@@ -319,11 +319,11 @@ def main(config: _config.TrainConfig):
             _checkpoints.save_state(checkpoint_manager, train_state, data_loader, checkpoint_step)
             if tpu_multihost:
                 # A committed GCS checkpoint is the only recoverable state for
-                # a Spot multi-VM slice.  Do not resume training while a local
-                # Orbax write or its upload remains unfinished.
+                # a Spot multi-VM slice.  Do not resume training while Orbax's
+                # native shared-GCS write remains unfinished.
                 checkpoint_manager.wait_until_finished()
-                tpu_checkpointing.upload_and_commit(
-                    config.checkpoint_dir,
+                tpu_checkpointing.commit_shared_checkpoint(
+                    str(config.checkpoint_dir),
                     checkpoint_step,
                     provenance={
                         "config_name": config.name,

@@ -45,6 +45,14 @@ def _make_config(task: str, condition: str, *, smoke: bool):
     base = INPUT_ROOT / "checkpoints" / base_name / "params"
     phase = "smoke" if smoke else "technical"
     name = f"task13_tpu_{phase}_{task}_{condition}"
+    # A v6e-16 has four independent VM-local disks. Its checkpoint root must
+    # instead be the shared GCS run prefix so Orbax can run its native
+    # multi-process protocol. The local fallback is retained only for
+    # non-multihost import/config inspection.
+    gcs_run_uri = os.environ.get("TASK13_TPU_GCS_RUN_URI", "").rstrip("/")
+    checkpoint_base_dir = (
+        f"{gcs_run_uri}/orbax" if gcs_run_uri else str(LOCAL_RUNS_ROOT / f"checkpoints_{phase}")
+    )
     data_common = {
         "root": data_root,
         "repo_id": "local_repo",
@@ -68,7 +76,7 @@ def _make_config(task: str, condition: str, *, smoke: bool):
         freeze_filter=model.get_freeze_filter(),
         ema_decay=None,
         assets_base_dir=str(assets_root),
-        checkpoint_base_dir=str(LOCAL_RUNS_ROOT / f"checkpoints_{phase}"),
+        checkpoint_base_dir=checkpoint_base_dir,
         seed=42,
         batch_size=32,
         num_workers=NUM_WORKERS,

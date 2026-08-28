@@ -33,7 +33,12 @@ class _LocalProcessArrayMetadataValidator:
 def initialize_checkpoint_dir(
     checkpoint_dir: epath.Path | str, *, keep_period: int | None, overwrite: bool, resume: bool
 ) -> tuple[ocp.CheckpointManager, bool]:
-    checkpoint_dir = epath.Path(checkpoint_dir).resolve()
+    checkpoint_dir = epath.Path(checkpoint_dir)
+    shared_gcs_tpu = (
+        os.environ.get("TASK13_TPU_MULTIHOST") == "1" and str(checkpoint_dir).startswith("gs://")
+    )
+    if not str(checkpoint_dir).startswith("gs://"):
+        checkpoint_dir = checkpoint_dir.resolve()
     resuming = False
     if checkpoint_dir.exists():
         if overwrite:
@@ -48,37 +53,27 @@ def initialize_checkpoint_dir(
                 "to indicate how to handle it."
             )
 
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    # Orbax owns GCS checkpoint-root creation for a native multi-host save.
+    # Eagerly creating object-store pseudo-directories caused the previous
+    # direct-GCS experiment to fail before state was written.
+    if not shared_gcs_tpu:
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     tpu_multihost = os.environ.get("TASK13_TPU_MULTIHOST") == "1"
+    if tpu_multihost and not shared_gcs_tpu:
+        raise RuntimeError(
+            "Task13 v6e-16 checkpointing requires a shared gs:// root; worker-local Orbax roots are unsupported."
+        )
     options = ocp.CheckpointManagerOptions(
         max_to_keep=1,
         keep_period=keep_period,
-        create=False,
+        create=shared_gcs_tpu,
         async_options=ocp.AsyncOptions(timeout_secs=7200),
     )
-    # TPU v6e workers have independent local disks.  An Orbax manager must
-    # therefore be a *single-process* manager on each host: ``primary_host``
-    # alone does not isolate the manager, and otherwise its finalize thread
-    # still participates in the four-host global barrier while looking for a
-    # directory that only exists on its local disk.  The caller transports the
-    # four independently completed contributions to GCS and commits them with
-    # the explicit Task13 manifest protocol.
-    if tpu_multihost:
-        options = dataclasses.replace(
-            options,
-            multiprocessing_options=ocp_options.MultiprocessingOptions(
-                primary_host=None,
-                barrier_sync_key_prefix="task13-local-orbax-",
-            ),
-            # Orbax >=0.11.23 scopes its asynchronous directory and signal
-            # setup to the local process in this mode.  This is required when
-            # every v6e worker writes the same logical step to a different
-            # local filesystem before the explicit GCS shard transport.
-            enable_per_process_directory_creation=True,
-        )
-
-    pytree_kwargs = {"array_metadata_validator": _LocalProcessArrayMetadataValidator()} if tpu_multihost else {}
+    # Native GCS checkpointing uses Orbax's normal multi-process protocol and
+    # a single shared root. In particular, do not enable per-process local
+    # directory creation or override array metadata validation here.
+    pytree_kwargs = {}
     mngr = ocp.CheckpointManager(
         checkpoint_dir,
         item_handlers={
@@ -163,9 +158,7 @@ class CallbackHandler(ocp.AsyncCheckpointHandler):
         # every TPU VM.  Each local Orbax manager is therefore a primary for
         # its own contribution; restricting this callback to global process 0
         # leaves the remaining managers waiting for an absent asset commit.
-        if os.environ.get("TASK13_TPU_MULTIHOST") == "1":
-            args.callback(directory)
-        elif jax.process_index() == 0:
+        if jax.process_index() == 0:
             args.callback(directory)
 
     async def async_save(self, directory: epath.Path, args: CallbackSave) -> list[futures.Future]:

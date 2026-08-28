@@ -41,7 +41,8 @@ gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/
   input_assets/       # immutable datasets, bases, norms, manifests
   bootstrap/<release>/ # startup script, source archive, pinned wheelhouse, manifest
   runs/<campaign>/<cell>/
-    checkpoints/<step>/worker-<index>/
+    orbax/<config>/<experiment>/<step>/ # native shared-GCS Orbax state
+    checkpoints/<step>/COMMITTED.json
     COMMITTED.json
     logs/
     provenance/
@@ -75,13 +76,14 @@ preflight → launch”，而不再临时安装、临时 clone、临时找输入
 
 1. 四个进程同时 `jax.distributed.initialize()`，确认 `process_count=4`、
    `device_count=16`，并完成跨 host collective。
-2. 检查实际 Orbax 输出，明确每个 process 写出的文件；不得臆测文件布局。
-3. 每个 process 将自己的已完成 shard 上传到
-   `checkpoints/<step>/worker-<index>/`，并写 sizes/SHA manifest。
-4. 仅 worker 0 在收到四份正确 manifest 后写 `COMMITTED.json`。它记录 step、
-   process count、release/config/base/data SHA、每个 worker 的字节数与 SHA。
-5. 恢复时只认可含 `COMMITTED.json` 的最大 step；四个 worker 分别下载自己的
-   shard，屏障同步后实际 restore，继续至少一个训练 step。
+2. 四个 process 对同一 shared-GCS Orbax root 同时保存；不得为每个 worker
+   构造独立本地 manager 或以 `rsync` 拼接 shard。
+3. 必须在四个 process 都从 `wait_until_finished()` 返回后，由 worker 0 枚举
+   原子完成的 Orbax step 对象。
+4. worker 0 才写 `COMMITTED.json`，记录 step、process count、release/config
+   与 native Orbax checkpoint URI；`LATEST.json` 必须引用同一记录。
+5. 恢复时直接从相同 shared-GCS Orbax root restore；四机完成 restore 后，继续
+   至少一个真实训练 step。
 
 2026-08-28 的 v6e-16 结果：四机 collective、分片 data loader 与 Hammer
 `nominal_src` 的 100-step 真训练通过（稳态约 1.3 step/s）；但三种候选

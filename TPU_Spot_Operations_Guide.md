@@ -27,7 +27,7 @@ the Spot-VM recovery tutorial and the validated Task13 TPU run on 2026-08-26.
 | Current Task13 side-branch inputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/input_assets/` |
 | Current Task13 side-branch outputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/runs/` — use a new per-run child |
 | TPU branch | `task13-tpu-feasibility-prep` in `Tan20042023/Contact-Demo-Gen` |
-| Current checkpoint-contract release | Git `25a474d`; GCS `bootstrap/25a474d/source-layout-v2.tar.gz`; SHA-256 `a6564298f07d74dbe3e3604c23aae1e1beb02897ee45cd46c83b42b3c9178261`. **It permits only the checkpoint-contract smoke and clean-resume validation; it is not yet a qualified formal-training release.** |
+| Current checkpoint-contract release | Git `23620bc`; GCS `bootstrap/23620bc/source-layout-v2.tar.gz`; SHA-256 `7c3dd841791489d19680ee7ea0f030c06e80a0a7b00e4e243329558f5247a0af`. **It permits only the checkpoint-contract smoke and clean-resume validation; it is not yet a qualified formal-training release.** |
 
 Do not assume a future Spot allocation has the same IP, zone, topology, device
 count, service account, or capacity. `v6e-4` is the last *qualified* recovery
@@ -184,14 +184,18 @@ Spot-reuse accident from silently loading stale source.
   recovery test.
 - A single-host local Orbax directory/`UPLOAD_COMPLETE` sidecar is valid only
   for single-host slices. It is **not valid for v6e-16**: each TPU VM has a
-  separate local filesystem and Orbax writes process-specific state.
-- The current v6e-16 candidate attempts to upload each completed local
-  contribution under
-  `checkpoints/<step>/worker-<index>/`, with a byte count and SHA manifest.
-  Worker 0 writes `COMMITTED.json` only after all four manifests have been
-  verified. Restore only a step with that commit record, materialize the needed
-  union on every worker, then run an actual restore plus one training step.
-- Until the exact all-worker save/upload/restore test passes and writes a
+  separate local filesystem. Do not work around this with per-worker local
+  managers or `rsync` shard transport; their finalize barriers are still a
+  multi-host protocol and have been observed to stall.
+- For v6e-16, all four processes use one native shared GCS Orbax root under
+  `runs/<campaign>/<cell>/orbax/<config>/<exp>/<step>/`. Orbax owns distributed
+  save/restore and atomic step finalization. Only after every process returns
+  from `wait_until_finished()` does worker 0 enumerate the finalized objects
+  and write `checkpoints/<step>/COMMITTED.json` plus `LATEST.json`.
+- Restore reads the same shared GCS Orbax root directly. It requires `LATEST`
+  to name the matching config root, then must complete an actual update on all
+  four workers.
+- Until the exact all-worker GCS save/restore test passes and writes a
   source-SHA-specific `CHECKPOINT_CONTRACT_PASS.json`, **no 1k or 30k Task13
   run may start**. The launcher rejects a formal configuration without that
   proof and rejects a non-empty initial output prefix. Do not pre-create a
@@ -230,9 +234,9 @@ On preemption:
 2. Run the immutable GCS bootstrap release on every worker; it recreates the
    isolated environment, source, and read-only inputs without 5090.
 3. Verify the attached identity's GCS access and all four `READY.json` records.
-4. Download only the newest step containing `COMMITTED.json`, validate every
-   worker manifest, materialize it on all workers, and use an explicitly
-   approved `resume=True` configuration.
+4. Use the shared GCS root named by the newest `COMMITTED.json` and an
+   explicitly approved `resume=True` configuration; verify a post-restore
+   update on all workers.
 
 ## Closeout
 

@@ -697,10 +697,15 @@ class TrainConfig:
         return (pathlib.Path(self.assets_base_dir) / self.name).resolve()
 
     @property
-    def checkpoint_dir(self) -> pathlib.Path:
+    def checkpoint_dir(self) -> pathlib.Path | epath.Path:
         """Get the checkpoint directory for this config."""
         if not self.exp_name:
             raise ValueError("--exp_name must be set")
+        # The isolated Task13 TPU side branch uses a shared GCS checkpoint
+        # root. Keep every existing GPU/local configuration on pathlib so this
+        # opt-in does not alter its path semantics.
+        if self.checkpoint_base_dir.startswith("gs://"):
+            return epath.Path(self.checkpoint_base_dir) / self.name / self.exp_name
         return (pathlib.Path(self.checkpoint_base_dir) / self.name / self.exp_name).resolve()
 
     @property
