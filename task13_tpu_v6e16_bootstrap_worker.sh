@@ -30,6 +30,10 @@ if [[ ! -d "${REPO}/openpi" ]]; then
   mkdir -p "$REPO"
   tar -xzf "$archive" -C "$REPO" --strip-components=1
 fi
+[[ -f "${REPO}/openpi/scripts/train.py" ]] || {
+  echo "BOOTSTRAP_FAIL: immutable source tree is missing openpi/scripts/train.py: ${REPO}" >&2
+  exit 7
+}
 
 if [[ ! -x "${VENV}/bin/python" ]]; then
   python3.11 -m venv "$VENV"
