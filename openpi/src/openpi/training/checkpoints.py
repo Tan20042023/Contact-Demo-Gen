@@ -55,7 +55,6 @@ def initialize_checkpoint_dir(
                 primary_host=None,
                 barrier_sync_key_prefix="task13-local-orbax-",
             ),
-            enable_per_process_directory_creation=True,
         )
 
     mngr = ocp.CheckpointManager(
