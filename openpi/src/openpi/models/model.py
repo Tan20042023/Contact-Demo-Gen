@@ -312,6 +312,12 @@ def restore_params(
 
     with ocp.PyTreeCheckpointer() as ckptr:
         metadata = ckptr.metadata(params_path)
+        # Orbax <=0.11.13 returned the PyTree metadata directly.  Newer
+        # releases return a StepMetadata wrapper whose ``item_metadata`` is
+        # the same PyTree description.  Accept both so TPU's supported
+        # multi-host checkpoint implementation can coexist with existing
+        # released base checkpoints.
+        metadata = getattr(metadata, "item_metadata", metadata)
         item = {"params": metadata["params"]}
 
         params = ckptr.restore(
