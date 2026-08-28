@@ -11,23 +11,11 @@ from etils import epath
 import jax
 import orbax.checkpoint as ocp
 import orbax.checkpoint.future as future
-from orbax.checkpoint import options as ocp_options
 
 from openpi.shared import array_typing as at
 import openpi.shared.normalize as _normalize
 import openpi.training.data_loader as _data_loader
 import openpi.training.utils as training_utils
-
-
-class _LocalProcessArrayMetadataValidator:
-    """Accept exactly one metadata record in a worker-local TPU shard."""
-
-    def validate_all_array_metadatas(self, array_metadatas):
-        if len(array_metadatas) != 1:
-            raise ValueError(
-                "A worker-local Task13 TPU checkpoint must contain metadata from exactly one process; "
-                f"found {len(array_metadatas)}."
-            )
 
 
 def initialize_checkpoint_dir(
@@ -74,13 +62,20 @@ def initialize_checkpoint_dir(
     # a single shared root. In particular, do not enable per-process local
     # directory creation or override array metadata validation here.
     pytree_kwargs = {}
+    item_handlers = {
+        "train_state": ocp.PyTreeCheckpointHandler(**pytree_kwargs),
+        "params": ocp.PyTreeCheckpointHandler(**pytree_kwargs),
+    }
+    # Task13 TPU inputs/assets are immutable in the sealed GCS bundle and are
+    # referenced by config on every rebuild. The legacy asset callback uses
+    # pathlib operations and cannot write a gs:// Orbax directory; omit this
+    # redundant checkpoint copy only on the shared-GCS TPU path.
+    if not shared_gcs_tpu:
+        item_handlers["assets"] = CallbackHandler()
+
     mngr = ocp.CheckpointManager(
         checkpoint_dir,
-        item_handlers={
-            "assets": CallbackHandler(),
-            "train_state": ocp.PyTreeCheckpointHandler(**pytree_kwargs),
-            "params": ocp.PyTreeCheckpointHandler(**pytree_kwargs),
-        },
+        item_handlers=item_handlers,
         options=options,
     )
 
@@ -111,10 +106,11 @@ def save_state(
     with at.disable_typechecking():
         train_state, params = _split_params(state)
     items = {
-        "assets": save_assets,
         "train_state": train_state,
         "params": {"params": params},
     }
+    if os.environ.get("TASK13_TPU_MULTIHOST") != "1":
+        items["assets"] = save_assets
     checkpoint_manager.save(step, items)
 
 
@@ -154,10 +150,8 @@ class CallbackHandler(ocp.AsyncCheckpointHandler):
     """A CheckpointHandler for calling an arbitrary function asynchronously. Only for saving, not for restoring."""
 
     def save(self, directory: epath.Path, args: CallbackSave):
-        # The Task13 v6e-16 path uses a separate local checkpoint root on
-        # every TPU VM.  Each local Orbax manager is therefore a primary for
-        # its own contribution; restricting this callback to global process 0
-        # leaves the remaining managers waiting for an absent asset commit.
+        # This legacy local-filesystem callback is not installed for the
+        # shared-GCS TPU path; only its non-TPU callers use it.
         if jax.process_index() == 0:
             args.callback(directory)
 

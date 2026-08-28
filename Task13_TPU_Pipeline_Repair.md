@@ -78,3 +78,5 @@ accepts only `task13_tpu_technical_*` and requires a readable proof URI.
 - Never run a one-worker command that imports JAX and enumerates devices.
 - Never reuse partial output prefixes or treat a log line as recovery proof.
 - Do not edit GPU/A100 code paths or artifacts for this TPU side branch.
+- Current policy: a Spot preemption is a stop condition. The watcher must not
+  auto-recreate or otherwise mutate TPU resources after it observes one.

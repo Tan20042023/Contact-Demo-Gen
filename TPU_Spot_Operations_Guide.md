@@ -27,7 +27,7 @@ the Spot-VM recovery tutorial and the validated Task13 TPU run on 2026-08-26.
 | Current Task13 side-branch inputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/input_assets/` |
 | Current Task13 side-branch outputs | `gs://use1/user/tanjunhao/task13_tpu_sidebranch/v1/runs/` — use a new per-run child |
 | TPU branch | `task13-tpu-feasibility-prep` in `Tan20042023/Contact-Demo-Gen` |
-| Current checkpoint-contract release | Git `23620bc`; GCS `bootstrap/23620bc/source-layout-v2.tar.gz`; SHA-256 `7c3dd841791489d19680ee7ea0f030c06e80a0a7b00e4e243329558f5247a0af`. **It permits only the checkpoint-contract smoke and clean-resume validation; it is not yet a qualified formal-training release.** |
+| Current checkpoint-contract release | Git `e6dda50`; GCS `bootstrap/e6dda50/source-layout-v2.tar.gz`; SHA-256 `c9847bcd819ba707740c47a3cff8fa1ff1e3e6a57a6a87c7d16be5e6ac930d8c`. **It permits only the checkpoint-contract smoke and clean-resume validation; it is not yet a qualified formal-training release.** |
 
 Do not assume a future Spot allocation has the same IP, zone, topology, device
 count, service account, or capacity. `v6e-4` is the last *qualified* recovery
@@ -192,6 +192,10 @@ Spot-reuse accident from silently loading stale source.
   save/restore and atomic step finalization. Only after every process returns
   from `wait_until_finished()` does worker 0 enumerate the finalized objects
   and write `checkpoints/<step>/COMMITTED.json` plus `LATEST.json`.
+- The sealed input-assets bundle remains the sole source for Task13 norm/data
+  assets on TPU. Do not run the legacy local-path asset callback inside a
+  shared `gs://` Orbax checkpoint; it is intentionally omitted from this
+  side-branch checkpoint because resume reads the frozen input bundle again.
 - Restore reads the same shared GCS Orbax root directly. It requires `LATEST`
   to name the matching config root, then must complete an actual update on all
   four workers.
@@ -222,21 +226,17 @@ after `state=READY` **and** `health=HEALTHY`, then continues monitoring for a
 later preemption; a state JSON file with `ready: false` is not launch
 authorization. `SUSPENDED` with `stateInitiator=SERVICE` is a
 terminal service-side deletion: Cloud TPU will not allocate that queue again.
-With an explicit standing approval for Spot recovery, its `-AutoRecreate` mode
-may invoke the reviewed `G:\Ego\recreate-tpu-after-preemption.ps1`; it must not
-recreate merely because a queue is absent, since that can be intentional cleanup.
+**Current Task13 policy:** do not use `-AutoRecreate`. On a preemption or
+`UNHEALTHY_MAINTENANCE`, the watcher records `TPU_PREEMPTED_STOP` and exits;
+it must not delete, recreate, or bootstrap a TPU. A later operator decision is
+required before any recovery action. It must not recreate merely because a
+queue is absent, since that can be intentional cleanup.
 The local watcher cannot wake a hosted Codex conversation directly, so a later
 agent must read the JSON handoff before continuing.
 
-On preemption:
-
-1. Recreate the VM and perform the gcloud first-connect/IP update.
-2. Run the immutable GCS bootstrap release on every worker; it recreates the
-   isolated environment, source, and read-only inputs without 5090.
-3. Verify the attached identity's GCS access and all four `READY.json` records.
-4. Use the shared GCS root named by the newest `COMMITTED.json` and an
-   explicitly approved `resume=True` configuration; verify a post-restore
-   update on all workers.
+On preemption, stop. Preserve the durable watcher state and diagnostic logs,
+and wait for an explicit operator decision before any new allocation, cleanup,
+bootstrap, or resume.
 
 ## Closeout
 
