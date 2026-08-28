@@ -52,8 +52,9 @@ def initialize_checkpoint_dir(
         options = dataclasses.replace(
             options,
             multiprocessing_options=ocp_options.MultiprocessingOptions(
-                primary_host=None,
-                barrier_sync_key_prefix="task13-local-orbax-",
+                primary_host=jax.process_index(),
+                active_processes={jax.process_index()},
+                barrier_sync_key_prefix=f"task13-local-orbax-{jax.process_index()}-",
             ),
         )
 
