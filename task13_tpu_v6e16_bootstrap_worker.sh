@@ -35,8 +35,12 @@ if [[ ! -x "${VENV}/bin/python" ]]; then
   python3.11 -m venv "$VENV"
   "$VENV/bin/python" -m pip install --upgrade pip
   "$VENV/bin/python" -m pip install 'jax[tpu]==0.5.3' -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-  sed -n '/^dependencies = \[/,/^\]/p' "${REPO}/openpi/pyproject.toml" | sed -n 's/^[[:space:]]*"\(.*\)",$/\1/p' | grep -v '^jax\[cuda12\]' > "${STATE}/openpi-tpu-deps.txt"
-  "$VENV/bin/python" -m pip install -r "${STATE}/openpi-tpu-deps.txt" torchvision==0.22.1 lerobot==0.4.4
+  # Do not let PyPI resolve the CUDA-enabled PyTorch wheels on a TPU VM: they
+  # add several GB and are unused.  Install the matching CPU wheels explicitly,
+  # then remove Torch/TorchVision/JAX from the project dependency pass.
+  "$VENV/bin/python" -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.7.1+cpu' 'torchvision==0.22.1+cpu'
+  sed -n '/^dependencies = \[/,/^\]/p' "${REPO}/openpi/pyproject.toml" | sed -n 's/^[[:space:]]*"\(.*\)",$/\1/p' | grep -Ev '^(jax\[cuda12\]|torch([<=>!~]|$)|torchvision([<=>!~]|$))' > "${STATE}/openpi-tpu-deps.txt"
+  "$VENV/bin/python" -m pip install -r "${STATE}/openpi-tpu-deps.txt" torchcodec==0.5.* lerobot==0.4.4
   "$VENV/bin/python" -m pip install -e "${REPO}/openpi" --no-deps
   "$VENV/bin/python" -m pip install -e "${REPO}/openpi/packages/openpi-client" --no-deps
 fi

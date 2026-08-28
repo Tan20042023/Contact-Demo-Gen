@@ -11,6 +11,7 @@ set -euo pipefail
 : "${TASK13_TPU_INPUT_BYTES:=30696986145}"
 
 TPU_NAME="${TASK13_TPU_NAME:-tanjunhao-tpu}"
+SSH_USER="${TASK13_TPU_SSH_USER:-tanjunhao}"
 PROJECT="${TASK13_TPU_PROJECT:-whyu01}"
 ZONE="${TASK13_TPU_ZONE:-us-east1-d}"
 WORKERS="${TASK13_TPU_WORKERS:-all}"
@@ -36,8 +37,8 @@ ssh-add "${HOME}/.ssh/google_compute_engine" >/dev/null 2>&1 || {
 }
 
 common=(--project="${PROJECT}" --zone="${ZONE}" --worker="${WORKERS}")
-gcloud compute tpus tpu-vm ssh "${TPU_NAME}" "${common[@]}" --command='true' --output-directory="${LOG_DIR}/first_connect"
-gcloud compute tpus tpu-vm scp "${WORKER_SCRIPT}" "${TPU_NAME}:~/task13_tpu_v6e16_bootstrap_worker.sh" "${common[@]}"
+gcloud compute tpus tpu-vm ssh "${SSH_USER}@${TPU_NAME}" "${common[@]}" --command='true' --output-directory="${LOG_DIR}/first_connect"
+gcloud compute tpus tpu-vm scp "${WORKER_SCRIPT}" "${SSH_USER}@${TPU_NAME}:~/task13_tpu_v6e16_bootstrap_worker.sh" "${common[@]}"
 
 remote_env=(
   "TASK13_TPU_RUN_ID=${TASK13_TPU_RUN_ID}"
@@ -47,6 +48,6 @@ remote_env=(
   "TASK13_TPU_INPUT_BYTES=${TASK13_TPU_INPUT_BYTES}"
 )
 remote_command="chmod 700 ~/task13_tpu_v6e16_bootstrap_worker.sh && env ${remote_env[*]} ~/task13_tpu_v6e16_bootstrap_worker.sh"
-gcloud compute tpus tpu-vm ssh "${TPU_NAME}" "${common[@]}" --command="${remote_command}" --output-directory="${LOG_DIR}/bootstrap"
+gcloud compute tpus tpu-vm ssh "${SSH_USER}@${TPU_NAME}" "${common[@]}" --command="${remote_command}" --output-directory="${LOG_DIR}/bootstrap"
 
 echo "CONTROLLER_PASS: all workers bootstrapped; logs=${LOG_DIR}"
