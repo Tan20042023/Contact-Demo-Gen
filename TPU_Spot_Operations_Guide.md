@@ -163,6 +163,31 @@ loaded `openpi.training.task13_tpu_configs.__file__` in the preflight. A fresh
 bootstrap may install the project editable as usual; this rule prevents a
 Spot-reuse accident from silently loading stale source.
 
+For the next two independent formal cells, use
+`task13_tpu_v6e16_formal_dual_launch.ps1`. It performs common proof/source,
+topology, eight-IP and empty-prefix gates before it starts either bootstrap;
+then bootstraps and formally launches the two v6e-16 slices in parallel. It
+never creates/deletes/recreates a TPU, requires `-ApproveFormalLaunch`, and
+leaves a local two-cell launch manifest. Use `-DryRun` first; choose the two
+technical config names and an unused campaign name explicitly.
+
+For the planned P1 nominal pair, the dry-run form is:
+
+```powershell
+.\task13_tpu_v6e16_formal_dual_launch.ps1 `
+  -Campaign task13_p1_nominal_YYYYMMDD `
+  -Config1 task13_tpu_technical_hammer_nail_nominal_src `
+  -Config2 task13_tpu_technical_bimanual_assembly_nominal_src `
+  -TrainArgs1 '--num-train-steps=1000' `
+  -TrainArgs2 '--num-train-steps=1000' `
+  -DryRun
+```
+
+After inspecting the two printed run URIs, repeat exactly the command with
+`-ApproveFormalLaunch` in place of `-DryRun`. Omit the two `TrainArgs` values
+only when the approved plan is the full 30k technical run; the registered
+technical configuration otherwise defaults to 30,000 steps.
+
 ## Inputs, outputs, and checkpointing
 
 - The bootstrap release must copy required inputs from GCS to local disk before

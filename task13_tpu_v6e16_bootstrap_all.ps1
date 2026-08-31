@@ -10,6 +10,7 @@ param(
     [string]$Zone = 'us-east1-d',
     [string]$SshUser = 'tanjunhao',
     [string]$KeyPath = (Join-Path $env:USERPROFILE '.ssh\google_compute_engine'),
+    [switch]$SkipKnownHostsRefresh,
     [ValidateRange(30, 7200)] [int]$ReadyTimeoutSeconds = 3600
 )
 
@@ -31,10 +32,12 @@ if ($ips.Count -ne 4) { throw "Expected four v6e-16 worker IPs; found $($ips.Cou
 # the first OpenSSH connection records the new keys with accept-new.  Do not
 # disable host-key checking globally.
 $knownHosts = Join-Path $env:USERPROFILE '.ssh\known_hosts'
-foreach ($ip in $ips) {
-    if (Test-Path -LiteralPath $knownHosts) {
-        & ssh-keygen -R $ip -f $knownHosts *> $null
-        & ssh-keygen -R "[$ip]:22" -f $knownHosts *> $null
+if (-not $SkipKnownHostsRefresh) {
+    foreach ($ip in $ips) {
+        if (Test-Path -LiteralPath $knownHosts) {
+            & ssh-keygen -R $ip -f $knownHosts *> $null
+            & ssh-keygen -R "[$ip]:22" -f $knownHosts *> $null
+        }
     }
 }
 
