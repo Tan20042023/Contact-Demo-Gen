@@ -9,7 +9,9 @@ param(
     [string]$Project = 'whyu01',
     [string]$Zone = 'us-east1-d',
     [string]$SshUser = 'tanjunhao',
-    [string]$KeyPath = (Join-Path $env:USERPROFILE '.ssh\google_compute_engine')
+    [string]$KeyPath = (Join-Path $env:USERPROFILE '.ssh\google_compute_engine'),
+    [ValidateRange(1, 64)] [int]$ExpectedWorkers = 4,
+    [string]$ExpectedAcceleratorType = 'v6e-16'
 )
 
 # This is the only producer of CHECKPOINT_CONTRACT_PASS.json.  Run it only
@@ -26,7 +28,8 @@ if ($node.state -ne 'READY' -or $node.health -ne 'HEALTHY') {
     throw "TPU is not verifiable: state=$($node.state) health=$($node.health)"
 }
 $ips = @($node.networkEndpoints | ForEach-Object { $_.accessConfig.externalIp } | Where-Object { $_ })
-if ($ips.Count -ne 4) { throw "Expected four v6e-16 worker IPs; found $($ips.Count)" }
+if ($node.acceleratorType -ne $ExpectedAcceleratorType) { throw "Expected $ExpectedAcceleratorType; found $($node.acceleratorType)" }
+if ($ips.Count -ne $ExpectedWorkers) { throw "Expected $ExpectedWorkers worker IPs; found $($ips.Count)" }
 
 function Read-GcsJson([string]$Uri) {
     $content = & gcloud storage cat $Uri 2>$null
@@ -41,13 +44,13 @@ if (
     $initialCommit.step -ne $InitialStep -or
     $resumeCommit.step -ne $ResumeStep -or
     $latest.step -ne $ResumeStep -or
-    $initialCommit.process_count -ne 4 -or
-    $resumeCommit.process_count -ne 4 -or
-    $latest.process_count -ne 4 -or
+    $initialCommit.process_count -ne $ExpectedWorkers -or
+    $resumeCommit.process_count -ne $ExpectedWorkers -or
+    $latest.process_count -ne $ExpectedWorkers -or
     $initialCommit.object_count -le 0 -or
     $resumeCommit.object_count -le 0
 ) {
-    throw 'The initial or resumed native-GCS commit metadata is incomplete for the four-worker topology.'
+    throw "The initial or resumed native-GCS commit metadata is incomplete for the $ExpectedWorkers-process topology."
 }
 if ($initialCommit.provenance.source_sha256 -ne $SourceSha256 -or $resumeCommit.provenance.source_sha256 -ne $SourceSha256) {
     throw 'Committed source SHA differs from the requested source SHA.'
@@ -60,7 +63,7 @@ $objects = @(& gcloud storage ls --recursive "$($resumeCommit.checkpoint_uri)/**
 if ($LASTEXITCODE -ne 0 -or $objects.Count -eq 0) {
     throw "The resumed native-GCS checkpoint root is unreadable or empty: $($resumeCommit.checkpoint_uri)"
 }
-foreach ($worker in 0..3) {
+foreach ($worker in 0..($ExpectedWorkers - 1)) {
     if (-not ($objects | Where-Object { $_ -match "/array_metadatas/process_$worker(?:$|/)" })) {
         throw "No native Orbax array metadata witness for process $worker."
     }
@@ -72,10 +75,11 @@ foreach ($ip in $ips) {
 }
 
 $proof = [ordered]@{
-    schema = 'task13-v6e16-native-gcs-checkpoint-contract-v2'
+    schema = 'task13-tpu-native-gcs-checkpoint-contract-v3'
     status = 'PASS'
     source_sha256 = $SourceSha256
-    process_count = 4
+    process_count = $ExpectedWorkers
+    accelerator_type = $ExpectedAcceleratorType
     tpu_name = $TpuName
     zone = $Zone
     initial_checkpoint_step = $InitialStep

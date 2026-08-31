@@ -8,18 +8,32 @@ param(
     [string]$Purpose = 'checkpoint-contract',
     [string]$CheckpointContractProofUri,
     [string[]]$TrainArgs = @(),
+    [string]$TrainArgsJson,
     [switch]$Resume,
     [string]$TpuName = 'tanjunhao-tpu',
     [string]$Project = 'whyu01',
     [string]$Zone = 'us-east1-d',
     [string]$SshUser = 'tanjunhao',
-    [string]$KeyPath = (Join-Path $env:USERPROFILE '.ssh\google_compute_engine')
+    [string]$KeyPath = (Join-Path $env:USERPROFILE '.ssh\google_compute_engine'),
+    [ValidateRange(1, 64)] [int]$ExpectedWorkers = 4,
+    [ValidateRange(1, 256)] [int]$ExpectedDevices = 16,
+    [ValidateRange(1, 256)] [int]$FsdpDevices = 4
 )
 
 # Windows-native counterpart to task13_tpu_v6e16_launch.sh.  It deliberately
 # uses the OpenSSH key validated by bootstrap instead of the local gcloud
 # PuTTY integration, but does not create, alter, or tear down TPU resources.
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+$decodedTrainArgs = @()
+if ($TrainArgsJson) {
+    try { $decodedTrainArgs = @($TrainArgsJson | ConvertFrom-Json) }
+    catch { throw 'TrainArgsJson must be a JSON array of strings.' }
+    if (@($decodedTrainArgs | Where-Object { $_ -isnot [string] }).Count -gt 0) {
+        throw 'TrainArgsJson must contain only strings.'
+    }
+}
+$TrainArgs = @($TrainArgs) + @($decodedTrainArgs)
 $runUri = $GcsRunUri.TrimEnd('/')
 if ($runUri -notmatch '^gs://') { throw "GcsRunUri must be a gs:// prefix: $GcsRunUri" }
 if (-not (Test-Path -LiteralPath $KeyPath)) { throw "Compute Engine SSH key not found: $KeyPath" }
@@ -36,8 +50,8 @@ if ($Purpose -eq 'formal') {
     $proofText = & gcloud storage cat $CheckpointContractProofUri 2>$null
     if ($LASTEXITCODE -ne 0) { throw "Checkpoint contract proof is unreadable: $CheckpointContractProofUri" }
     try { $proof = ($proofText | Out-String | ConvertFrom-Json) } catch { throw "Checkpoint contract proof is not valid JSON: $CheckpointContractProofUri" }
-    if ($proof.status -ne 'PASS' -or $proof.source_sha256 -ne $SourceSha256 -or $proof.process_count -ne 4) {
-        throw 'Checkpoint contract proof does not PASS for this source SHA and four-worker topology.'
+    if ($proof.status -ne 'PASS' -or $proof.source_sha256 -ne $SourceSha256 -or $proof.process_count -ne $ExpectedWorkers) {
+        throw "Checkpoint contract proof does not PASS for this source SHA and $ExpectedWorkers-process topology."
     }
 }
 
@@ -46,7 +60,7 @@ if ($node.state -ne 'READY' -or $node.health -ne 'HEALTHY') {
     throw "TPU is not launchable: state=$($node.state) health=$($node.health)"
 }
 $ips = @($node.networkEndpoints | ForEach-Object { $_.accessConfig.externalIp } | Where-Object { $_ })
-if ($ips.Count -ne 4) { throw "Expected four v6e-16 worker IPs; found $($ips.Count)" }
+if ($ips.Count -ne $ExpectedWorkers) { throw "Expected $ExpectedWorkers worker IPs; found $($ips.Count)" }
 
 $latestExists = $false
 & gcloud storage ls "$runUri/LATEST.json" *> $null
@@ -112,9 +126,9 @@ export PYTHONPATH="`$HOME/$repoRel/src"
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
 export TASK13_TPU_INPUT_ROOT="`$HOME/task13_v6e16/input_assets"
 export TASK13_TPU_LOCAL_RUNS_ROOT="`$HOME/$runRootRel"
-export TASK13_TPU_FSDP_DEVICES=4 TASK13_TPU_NUM_WORKERS=0
+export TASK13_TPU_FSDP_DEVICES=$FsdpDevices TASK13_TPU_NUM_WORKERS=0
 cd "`$HOME/$repoRel"
-"`$HOME/task13_v6e16/venv/bin/python" -c "import jax; jax.distributed.initialize(); from openpi.training.config import get_config; from openpi.training.data_loader import create_torch_dataset; c=get_config('$Config'); d=c.data.create(c.assets_dirs,c.model); ds=create_torch_dataset(d,c.model.action_horizon,c.model); assert jax.process_count()==4 and jax.device_count()==16; print('LAUNCH_PREFLIGHT_PASS',jax.process_index(),len(ds))"
+"`$HOME/task13_v6e16/venv/bin/python" -c "import jax; jax.distributed.initialize(); from openpi.training.config import get_config; from openpi.training.data_loader import create_torch_dataset; c=get_config('$Config'); d=c.data.create(c.assets_dirs,c.model); ds=create_torch_dataset(d,c.model.action_horizon,c.model); assert jax.process_count()==$ExpectedWorkers and jax.device_count()==$ExpectedDevices; print('LAUNCH_PREFLIGHT_PASS',jax.process_index(),len(ds))"
 "@
 Invoke-Workers 'preflight' $preflight
 
@@ -124,7 +138,7 @@ export PYTHONPATH="`$HOME/$repoRel/src"
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TASK13_TPU_MULTIHOST=1
 export TASK13_TPU_INPUT_ROOT="`$HOME/task13_v6e16/input_assets"
 export TASK13_TPU_LOCAL_RUNS_ROOT="`$HOME/$runRootRel"
-export TASK13_TPU_FSDP_DEVICES=4 TASK13_TPU_NUM_WORKERS=0
+export TASK13_TPU_FSDP_DEVICES=$FsdpDevices TASK13_TPU_NUM_WORKERS=0
 export TASK13_TPU_GCS_RUN_URI='$runUri' TASK13_TPU_SOURCE_SHA256='$SourceSha256'
 cd "`$HOME/$repoRel"
 mkdir -p "`$HOME/$logRel"

@@ -10,6 +10,7 @@ param(
     [string]$Zone = 'us-east1-d',
     [string]$SshUser = 'tanjunhao',
     [string]$KeyPath = (Join-Path $env:USERPROFILE '.ssh\google_compute_engine'),
+    [ValidateRange(1, 64)] [int]$ExpectedWorkers = 4,
     [switch]$SkipKnownHostsRefresh,
     [ValidateRange(30, 7200)] [int]$ReadyTimeoutSeconds = 3600
 )
@@ -24,7 +25,7 @@ if ($node.state -ne 'READY' -or $node.health -ne 'HEALTHY') {
     throw "TPU is not launchable: state=$($node.state) health=$($node.health)"
 }
 $ips = @($node.networkEndpoints | ForEach-Object { $_.accessConfig.externalIp } | Where-Object { $_ })
-if ($ips.Count -ne 4) { throw "Expected four v6e-16 worker IPs; found $($ips.Count)" }
+if ($ips.Count -ne $ExpectedWorkers) { throw "Expected $ExpectedWorkers worker IPs; found $($ips.Count)" }
 
 # Spot recreations can reuse an external IP whose previous TPU VM had a
 # different SSH host key.  The IP list above was obtained from the authoritative
@@ -44,7 +45,7 @@ if (-not $SkipKnownHostsRefresh) {
 # This gcloud call publishes the local Compute Engine public key for the actual
 # TPU account.  Windows gcloud may use PuTTY and return after a host-key prompt;
 # OpenSSH below performs the real noninteractive host connection and verification.
-foreach ($worker in 0..3) {
+foreach ($worker in 0..($ExpectedWorkers - 1)) {
     & gcloud compute tpus tpu-vm ssh "${SshUser}@${TpuName}" "--project=$Project" "--zone=$Zone" "--worker=$worker" --command=true | Out-Host
 }
 foreach ($ip in $ips) {
@@ -92,7 +93,7 @@ while ((Get-Date) -lt $deadline) {
             }
         }
     }
-    if ($ready -eq 4) { Write-Host "BOOTSTRAP_ALL_READY run_id=$RunId"; exit 0 }
+    if ($ready -eq $ExpectedWorkers) { Write-Host "BOOTSTRAP_ALL_READY run_id=$RunId workers=$ExpectedWorkers"; exit 0 }
     Start-Sleep -Seconds 30
 }
-throw "Timed out waiting for four READY.json records: run_id=$RunId"
+throw "Timed out waiting for $ExpectedWorkers READY.json records: run_id=$RunId"
