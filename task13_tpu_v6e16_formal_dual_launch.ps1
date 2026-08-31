@@ -151,7 +151,11 @@ $bootstrapJobs = foreach ($cell in $cells) {
 $bootstrapJobs | Wait-Job | Out-Null
 $bootstrapFailures = @()
 foreach ($job in $bootstrapJobs) {
-    Receive-Job $job | Out-Host
+    # gcloud's successful SSH-key propagation writes progress to stderr. Do
+    # not let that informational stream abort the controller; the job state
+    # and the bootstrap controller's four READY records remain authoritative.
+    $jobOutput = @(Receive-Job $job -ErrorAction SilentlyContinue 2>&1)
+    $jobOutput | Out-Host
     if ($job.State -ne 'Completed') { $bootstrapFailures += $job }
     Remove-Job $job -Force
 }
@@ -177,7 +181,8 @@ $launchJobs = foreach ($cell in $cells) {
 $launchJobs | Wait-Job | Out-Null
 $launchFailures = @()
 foreach ($job in $launchJobs) {
-    Receive-Job $job | Out-Host
+    $jobOutput = @(Receive-Job $job -ErrorAction SilentlyContinue 2>&1)
+    $jobOutput | Out-Host
     if ($job.State -ne 'Completed') { $launchFailures += $job }
     Remove-Job $job -Force
 }
